@@ -1,0 +1,75 @@
+snooze:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: true
+    duration:
+      required: true
+      default:
+        hours: 4
+      selector:
+        duration:
+          enable_day: true
+
+unsnooze:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: true
+
+acknowledge:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: true
+
+enable:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: true
+
+disable:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: true
+
+cleanup:
+  fields:
+    orphans:
+      required: false
+      default: false
+      selector:
+        boolean:
+
+export_journal:
+  fields:
+    since:
+      required: false
+      selector:
+        datetime:
+    until:
+      required: false
+      selector:
+        datetime:
+    entity_id:
+      required: false
+      selector:
+        entity:
+          domain: binary_sensor

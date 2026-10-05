@@ -1,0 +1,14 @@
+{
+  "domain": "alerty",
+  "name": "Alerty",
+  "codeowners": ["@puchalskipl"],
+  "config_flow": true,
+  "dependencies": ["persistent_notification"],
+  "after_dependencies": ["notify", "mobile_app", "template"],
+  "documentation": "https://github.com/puchalskipl/alerty",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.1.0"
+}

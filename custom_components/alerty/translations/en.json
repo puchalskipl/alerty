@@ -1,0 +1,113 @@
+{
+  "title": "Alerty",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Alerty",
+        "description": "Observes binary_sensor.alert_* entities (defined in templates/alerting.yaml), sends notifications, keeps a journal and lets you snooze alerts. Starts in observe mode (sends nothing) — configure options after adding."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Only one instance is allowed."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Alert settings",
+        "data": {
+          "mode": "Mode",
+          "startup_grace": "Grace period after HA start",
+          "push_targets_error": "Errors — push to",
+          "persistent_error": "Errors — persistent notification",
+          "reminder_error": "Errors — remind every",
+          "channel_error": "Errors — Android channel",
+          "push_targets_warning": "Warnings — push to",
+          "persistent_warning": "Warnings — persistent notification",
+          "reminder_warning": "Warnings — remind every",
+          "channel_warning": "Warnings — Android channel",
+          "push_targets_info": "Info — push to",
+          "persistent_info": "Info — persistent notification",
+          "reminder_info": "Info — remind every",
+          "channel_info": "Info — Android channel",
+          "on_resolve": "When an alert resolves",
+          "cleanup_after_days": "Dismiss resolved persistents after (days)",
+          "cleanup_time": "Cleanup time",
+          "retention_days": "Journal retention (days)",
+          "push_click_path": "Push opens (path)"
+        }
+      }
+    }
+  },
+  "selector": {
+    "mode": {
+      "options": {
+        "observe": "Observe (send nothing)",
+        "normal": "Send"
+      }
+    },
+    "on_resolve": {
+      "options": {
+        "update": "Update persistent notification",
+        "dismiss": "Dismiss persistent notification"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "active_alerts": { "name": "Active alerts" },
+      "errors_count": { "name": "Active alerts - errors" },
+      "warnings_count": { "name": "Active alerts - warnings" },
+      "infos_count": { "name": "Active alerts - info" },
+      "journal": { "name": "Alert journal" },
+      "snoozed": { "name": "Snoozed alerts" }
+    },
+    "switch": {
+      "sending": { "name": "Alert sending" }
+    }
+  },
+  "services": {
+    "snooze": {
+      "name": "Snooze",
+      "description": "Snoozes an alert for the given time: not counted, no push or reminders.",
+      "fields": {
+        "entity_id": { "name": "Alert", "description": "binary_sensor.alert_* entity." },
+        "duration": { "name": "Duration", "description": "How long to snooze." }
+      }
+    },
+    "unsnooze": {
+      "name": "Unsnooze",
+      "description": "Ends a snooze early.",
+      "fields": { "entity_id": { "name": "Alert", "description": "binary_sensor.alert_* entity." } }
+    },
+    "acknowledge": {
+      "name": "Acknowledge",
+      "description": "Stops reminders for an ongoing alert; it stays counted as active.",
+      "fields": { "entity_id": { "name": "Alert", "description": "binary_sensor.alert_* entity." } }
+    },
+    "enable": {
+      "name": "Enable",
+      "description": "Re-enables a disabled alert.",
+      "fields": { "entity_id": { "name": "Alert", "description": "binary_sensor.alert_* entity." } }
+    },
+    "disable": {
+      "name": "Disable",
+      "description": "Permanently silences an alert (until enabled) without removing its definition.",
+      "fields": { "entity_id": { "name": "Alert", "description": "binary_sensor.alert_* entity." } }
+    },
+    "cleanup": {
+      "name": "Clean up notifications",
+      "description": "Dismisses resolved alert notifications older than the configured age and prunes the journal.",
+      "fields": { "orphans": { "name": "Orphans too", "description": "Also dismiss alert_* notifications unknown to the integration." } }
+    },
+    "export_journal": {
+      "name": "Export journal",
+      "description": "Returns journal entries (all, not only the last 25).",
+      "fields": {
+        "since": { "name": "From", "description": "Range start." },
+        "until": { "name": "To", "description": "Range end." },
+        "entity_id": { "name": "Alert", "description": "Only this alert." }
+      }
+    }
+  }
+}
