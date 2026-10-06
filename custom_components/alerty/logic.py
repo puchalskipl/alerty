@@ -21,6 +21,7 @@ from .const import (
     ALERT_PREFIX,
     ATTR_FRIENDLY_NAME,
     ATTR_ICON,
+    ATTR_JOURNAL,
     ATTR_MESSAGE,
     ATTR_NOTIFY_CHANNEL,
     ATTR_NOTIFY_CLICK_PATH,
@@ -112,6 +113,7 @@ class AlertDef:
     persistent: bool | None = None
     channel: str | None = None
     click_path: str | None = None
+    journal: bool = True  # `journal: false` = tylko widok bieżący, bez wpisu w dzienniku
 
     @classmethod
     def from_attributes(
@@ -130,6 +132,7 @@ class AlertDef:
         icon = attributes.get(ATTR_ICON)
         channel = attributes.get(ATTR_NOTIFY_CHANNEL)
         click = attributes.get(ATTR_NOTIFY_CLICK_PATH)
+        journal = parse_bool(attributes.get(ATTR_JOURNAL))
         return cls(
             entity_id=entity_id,
             title=title.strip(),
@@ -140,6 +143,7 @@ class AlertDef:
             persistent=parse_bool(attributes.get(ATTR_NOTIFY_PERSISTENT)),
             channel=channel.strip() if isinstance(channel, str) and channel.strip() else None,
             click_path=click.strip() if isinstance(click, str) and click.strip() else None,
+            journal=True if journal is None else journal,
         )
 
 
@@ -185,6 +189,7 @@ class ActiveRecord:
     acknowledged: bool = False
     snoozed_until: datetime | None = None
     disabled: bool = False
+    journal: bool = True
 
     @property
     def suppressed(self) -> bool:
@@ -216,6 +221,7 @@ class ActiveRecord:
             "acknowledged": self.acknowledged,
             "snoozed_until": _iso(self.snoozed_until),
             "disabled": self.disabled,
+            "journal": self.journal,
         }
 
     @classmethod
@@ -245,6 +251,7 @@ class ActiveRecord:
             acknowledged=bool(data.get("acknowledged", False)),
             snoozed_until=_from_iso(data.get("snoozed_until")),
             disabled=bool(data.get("disabled", False)),
+            journal=bool(data.get("journal", True)),
         )
 
 
@@ -447,7 +454,9 @@ def _resolve_actions(
     dismiss_only: bool = False,
 ) -> list[Action]:
     """Wiersz #3 tabeli: alert ustąpił."""
-    actions: list[Action] = [JournalClose(rec.entity_id, rec.journal_id, now, off_approx)]
+    actions: list[Action] = []
+    if rec.journal:
+        actions.append(JournalClose(rec.entity_id, rec.journal_id, now, off_approx))
     pid = rec.persistent_id
     if pid and pid in existing_persistents:
         if opts.on_resolve == ON_RESOLVE_UPDATE and not dismiss_only:
@@ -500,7 +509,7 @@ def handle_state(
             body_on=defn.body,
             body_now=defn.body,
             on_ts=now,
-            journal_id=new_id(),
+            journal_id=new_id() if defn.journal else "",
             source=source,
             icon=defn.icon,
             channel=defn.channel,
@@ -509,20 +518,26 @@ def handle_state(
             want_persistent=_wants_persistent(defn, opts),
             snoozed_until=snoozed_until,
             disabled=disabled,
+            journal=defn.journal,
         )
         state.active[entity_id] = rec
-        entry = JournalEntry(
-            id=rec.journal_id,
-            entity_id=entity_id,
-            title=defn.title,
-            severity=defn.severity,
-            body=defn.body,
-            on=now,
-            snoozed=snoozed_until is not None,
-            disabled=disabled,
-            source=source,
-        )
-        actions: list[Action] = [JournalOpen(entry)]
+        actions: list[Action] = []
+        if defn.journal:
+            actions.append(
+                JournalOpen(
+                    JournalEntry(
+                        id=rec.journal_id,
+                        entity_id=entity_id,
+                        title=defn.title,
+                        severity=defn.severity,
+                        body=defn.body,
+                        on=now,
+                        snoozed=snoozed_until is not None,
+                        disabled=disabled,
+                        source=source,
+                    )
+                )
+            )
         if rec.suppressed:  # #2 — wyciszony/wyłączony: tylko dziennik
             return actions
         actions.extend(_notify_actions(rec, opts, now))  # #1

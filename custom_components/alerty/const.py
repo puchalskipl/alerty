@@ -16,6 +16,7 @@ ATTR_NOTIFY_TARGETS = "notify_targets"
 ATTR_NOTIFY_PERSISTENT = "notify_persistent"
 ATTR_NOTIFY_CHANNEL = "notify_channel"
 ATTR_NOTIFY_CLICK_PATH = "notify_click_path"
+ATTR_JOURNAL = "journal"  # false = alert nie trafia do dziennika (tylko widok bieżący)
 ATTR_ICON = "icon"
 ATTR_FRIENDLY_NAME = "friendly_name"
 

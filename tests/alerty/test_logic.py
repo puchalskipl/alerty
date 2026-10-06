@@ -476,6 +476,22 @@ def test_acknowledge_without_record(now):
     assert logic.acknowledge(State(), EID) == []
 
 
+def test_journal_false_skips_journal_but_still_notifies(now):
+    assert defn().journal is True and defn(journal="false").journal is False
+    state = State()
+    actions = logic.handle_state(state, EID, defn(journal=False), "on", now, opts())
+    assert only(actions, JournalOpen) == []
+    assert len(only(actions, CreatePersistent)) == 1 and len(only(actions, SendPush)) == 1
+    rec = state.active[EID]
+    assert rec.journal is False and rec.journal_id == ""
+    assert logic.active_summary(state, now)["total"] == 1
+    assert State.from_dict(state.to_dict()).active[EID].journal is False
+    off = logic.handle_state(state, EID, defn(journal=False), "off", now + timedelta(hours=1), opts(), {PID})
+    assert only(off, JournalClose) == []
+    assert len(only(off, CreatePersistent)) == 1  # „✅ …” nadal
+    assert EID not in state.active
+
+
 # --------------------------------------------------------------------------
 # #14 / #15 — sprzątanie i zamknięcie przez użytkownika
 # --------------------------------------------------------------------------
