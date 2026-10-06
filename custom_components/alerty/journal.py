@@ -75,9 +75,9 @@ class JournalEntry:
         }
     )
     reminders: int = 0
-    snoozed: bool = False
-    acknowledged: bool = False
-    disabled: bool = False
+    muted: bool = False  # wyciszony (do odwołania) — nic nie wysłano / dalej nie wysyła
+    dismissed: bool = False  # odrzucony przez użytkownika (ukryty z listy aktywnych)
+    disabled: bool = False  # wyłączony na stałe
     source: str = "change"
 
     @property
@@ -119,8 +119,9 @@ class JournalEntry:
                 "errors": list(notified.get("errors") or []),
             },
             reminders=int(data.get("reminders") or 0),
-            snoozed=bool(data.get("snoozed", False)),
-            acknowledged=bool(data.get("acknowledged", False)),
+            # `snoozed` — stare wpisy (wyciszenie czasowe przed 2026-10-07).
+            muted=bool(data.get("muted", data.get("snoozed", False))),
+            dismissed=bool(data.get("dismissed", False)),
             disabled=bool(data.get("disabled", False)),
             source=str(data.get("source") or "change"),
         )
@@ -193,18 +194,18 @@ class Journal:
         self,
         journal_id: str | None,
         *,
-        snoozed: bool | None = None,
-        acknowledged: bool | None = None,
+        muted: bool | None = None,
+        dismissed: bool | None = None,
         disabled: bool | None = None,
         reminders: int | None = None,
     ) -> None:
         entry = self.get(journal_id)
         if entry is None:
             return
-        if snoozed is not None:
-            entry.snoozed = snoozed
-        if acknowledged is not None:
-            entry.acknowledged = acknowledged
+        if muted is not None:
+            entry.muted = muted
+        if dismissed is not None:
+            entry.dismissed = dismissed
         if disabled is not None:
             entry.disabled = disabled
         if reminders is not None:

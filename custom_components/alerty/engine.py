@@ -48,6 +48,15 @@ _LOGGER = logging.getLogger(__name__)
 
 TICK_INTERVAL = timedelta(seconds=60)
 
+USER_ACTIONS: dict[str, Callable[[State, str], list[Action]]] = {
+    "dismiss": logic.dismiss,
+    "undismiss": logic.undismiss,
+    "mute": logic.mute,
+    "unmute": logic.unmute,
+    "disable": logic.disable,
+    "enable": logic.enable,
+}
+
 
 @callback
 def _is_alert_event(data: dict[str, Any]) -> bool:
@@ -119,7 +128,11 @@ class Engine:
         self.options = options
         self._schedule_cleanup()
         self._notify_entities()
-        _LOGGER.debug("Opcje zaktualizowane: tryb %s", options.mode)
+        _LOGGER.debug(
+            "Opcje zaktualizowane: push %s, powiadomienia w HA %s",
+            options.push_enabled,
+            options.persistent_enabled,
+        )
 
     # ------------------------------------------------------------------
     # Zdarzenia
@@ -223,35 +236,12 @@ class Engine:
     # Usługi
     # ------------------------------------------------------------------
 
-    async def async_snooze(self, entity_ids: Iterable[str], duration: timedelta) -> None:
-        until = self._now() + duration
+    async def async_user_action(self, name: str, entity_ids: Iterable[str]) -> None:
+        """Działanie użytkownika: dismiss / undismiss / mute / unmute / disable / enable."""
+        handler = USER_ACTIONS[name]
         actions: list[Action] = []
         for entity_id in entity_ids:
-            actions.extend(logic.snooze(self.state, entity_id, until))
-        await self._execute(actions)
-
-    async def async_unsnooze(self, entity_ids: Iterable[str]) -> None:
-        actions: list[Action] = []
-        for entity_id in entity_ids:
-            actions.extend(logic.unsnooze(self.state, entity_id, self._now(), self.options))
-        await self._execute(actions)
-
-    async def async_acknowledge(self, entity_ids: Iterable[str]) -> None:
-        actions: list[Action] = []
-        for entity_id in entity_ids:
-            actions.extend(logic.acknowledge(self.state, entity_id))
-        await self._execute(actions)
-
-    async def async_disable(self, entity_ids: Iterable[str]) -> None:
-        actions: list[Action] = []
-        for entity_id in entity_ids:
-            actions.extend(logic.disable(self.state, entity_id))
-        await self._execute(actions)
-
-    async def async_enable(self, entity_ids: Iterable[str]) -> None:
-        actions: list[Action] = []
-        for entity_id in entity_ids:
-            actions.extend(logic.enable(self.state, entity_id, self._now(), self.options))
+            actions.extend(handler(self.state, entity_id))
         await self._execute(actions)
 
     async def async_cleanup(self, orphans: bool) -> int:
@@ -272,7 +262,8 @@ class Engine:
 
     def summary(self) -> dict[str, Any]:
         data = logic.active_summary(self.state, self._now())
-        data["mode"] = self.options.mode
+        data["push_enabled"] = self.options.push_enabled
+        data["persistent_enabled"] = self.options.persistent_enabled
         return data
 
     def journal_view(self) -> dict[str, Any]:
@@ -291,7 +282,6 @@ class Engine:
     # ------------------------------------------------------------------
 
     async def _execute(self, actions: list[Action]) -> None:
-        sending = self.options.sending
         for action in actions:
             if isinstance(action, JournalOpen):
                 self.journal.open(action.entry)
@@ -300,23 +290,22 @@ class Engine:
             elif isinstance(action, JournalMark):
                 self.journal.mark(
                     action.journal_id,
-                    snoozed=action.snoozed,
-                    acknowledged=action.acknowledged,
+                    muted=action.muted,
+                    dismissed=action.dismissed,
                     disabled=action.disabled,
                     reminders=action.reminders,
                 )
             elif isinstance(action, CreatePersistent):
-                self.notifier.create_persistent(action, sending)
-                if sending:
-                    self.existing_persistents.add(action.notification_id)
+                self.notifier.create_persistent(action)
+                self.existing_persistents.add(action.notification_id)
                 if not action.restore:
-                    self.journal.note_persistent(action.journal_id, simulated=not sending)
+                    self.journal.note_persistent(action.journal_id, simulated=False)
             elif isinstance(action, DismissPersistent):
-                self.notifier.dismiss_persistent(action, sending)
+                self.notifier.dismiss_persistent(action)
                 self.existing_persistents.discard(action.notification_id)
             elif isinstance(action, SendPush):
-                errors = await self.notifier.async_send_push(action, sending)
-                self.journal.note_push(action.journal_id, action.targets, simulated=not sending)
+                errors = await self.notifier.async_send_push(action)
+                self.journal.note_push(action.journal_id, action.targets, simulated=False)
                 for error in errors:
                     self.journal.note_error(action.journal_id, error)
             elif isinstance(action, ScheduleRecheck):

@@ -1,6 +1,6 @@
 """Wykonanie akcji powiadomień: persistent (dzwonek) i push (notify.*).
 
-W trybie obserwacji nic nie wysyła — loguje, co by wysłało.
+O tym, czy kanał jest włączony, decyduje logika (logic.py) — tu tylko wysyłka.
 """
 
 from __future__ import annotations
@@ -23,16 +23,7 @@ class Notifier:
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
 
-    def create_persistent(self, action: CreatePersistent, sending: bool) -> None:
-        if not sending:
-            _LOGGER.info(
-                "[observe] persistent %s%s: %s / %s",
-                action.notification_id,
-                " (odtworzenie)" if action.restore else "",
-                action.title,
-                action.message,
-            )
-            return
+    def create_persistent(self, action: CreatePersistent) -> None:
         persistent_notification.async_create(
             self.hass,
             action.message,
@@ -40,24 +31,11 @@ class Notifier:
             notification_id=action.notification_id,
         )
 
-    def dismiss_persistent(self, action: DismissPersistent, sending: bool) -> None:
-        if not sending:
-            _LOGGER.info("[observe] dismiss persistent %s", action.notification_id)
-            return
+    def dismiss_persistent(self, action: DismissPersistent) -> None:
         persistent_notification.async_dismiss(self.hass, action.notification_id)
 
-    async def async_send_push(self, action: SendPush, sending: bool) -> list[str]:
+    async def async_send_push(self, action: SendPush) -> list[str]:
         """Wysyła push do każdego celu; zwraca listę błędów (bez przerywania)."""
-        if not sending:
-            _LOGGER.info(
-                "[observe] push%s → %s: %s / %s (%s)",
-                " (przypomnienie)" if action.reminder else "",
-                ", ".join(action.targets),
-                action.title,
-                action.message,
-                action.data.get("channel"),
-            )
-            return []
         errors: list[str] = []
         payload: dict[str, Any] = {
             "title": action.title,

@@ -66,14 +66,14 @@ def test_close_clamps_off_before_on(now):
 
 def test_marks_and_notes(now):
     journal = Journal([entry(now, id="j")])
-    journal.mark("j", snoozed=True, acknowledged=True, disabled=True, reminders=2)
+    journal.mark("j", muted=True, dismissed=True, disabled=True, reminders=2)
     journal.note_push("j", ["admins", "mobile"], simulated=False)
     journal.note_push("j", ["admins"], simulated=True)
     journal.note_persistent("j", simulated=False)
     journal.note_error("j", "x" * 300)
-    journal.mark("missing", snoozed=True)
+    journal.mark("missing", muted=True)
     e = journal.get("j")
-    assert e.snoozed and e.acknowledged and e.disabled and e.reminders == 2
+    assert e.muted and e.dismissed and e.disabled and e.reminders == 2
     assert e.notified == {
         "push": ["admins", "mobile"],
         "persistent": True,
@@ -183,3 +183,12 @@ def test_export_filters(now):
     assert [e["id"] for e in journal.export(until=now - timedelta(minutes=90))] == ["a"]
     assert [e["id"] for e in journal.export(entity_id="binary_sensor.alert_b")] == ["b"]
     assert journal.export()[0]["duration"] is None
+
+
+def test_legacy_snoozed_entry_reads_as_muted(now):
+    data = entry(now, id="old").to_dict()
+    data.pop("muted"); data.pop("dismissed")
+    data["snoozed"] = True
+    data["acknowledged"] = True
+    restored = JournalEntry.from_dict(data)
+    assert restored.muted is True and restored.dismissed is False

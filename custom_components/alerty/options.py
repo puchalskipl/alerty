@@ -21,7 +21,6 @@ from .const import (
     DEFAULT_REMINDER_S,
     DEFAULT_RETENTION_DAYS,
     DEFAULT_STARTUP_GRACE_S,
-    MODE_NORMAL,
     MODE_OBSERVE,
     ON_RESOLVE_DISMISS,
     ON_RESOLVE_UPDATE,
@@ -31,7 +30,9 @@ from .const import (
     OPT_MODE,
     OPT_ON_RESOLVE,
     OPT_PERSISTENT,
+    OPT_PERSISTENT_ENABLED,
     OPT_PUSH_CLICK_PATH,
+    OPT_PUSH_ENABLED,
     OPT_PUSH_TARGETS,
     OPT_REMINDER,
     OPT_RETENTION_DAYS,
@@ -132,7 +133,8 @@ def _int(value: Any, default: int, minimum: int = 0) -> int:
 class Options:
     """Ustawienia globalne integracji."""
 
-    mode: str = MODE_OBSERVE
+    push_enabled: bool = True  # kanał push na telefon
+    persistent_enabled: bool = True  # kanał „Powiadomienia w HA” (dzwonek)
     startup_grace: timedelta = timedelta(seconds=DEFAULT_STARTUP_GRACE_S)
     push_targets: Mapping[str, tuple[str, ...]] = field(
         default_factory=lambda: dict(DEFAULT_PUSH_TARGETS)
@@ -150,16 +152,11 @@ class Options:
     push_click_path: str = DEFAULT_PUSH_CLICK_PATH
     channels: Mapping[str, str] = field(default_factory=lambda: dict(DEFAULT_CHANNELS))
 
-    @property
-    def sending(self) -> bool:
-        return self.mode == MODE_NORMAL
-
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any] | None) -> "Options":
         data = data or {}
-        mode = data.get(OPT_MODE)
-        if mode not in (MODE_OBSERVE, MODE_NORMAL):
-            mode = MODE_OBSERVE
+        # Stare opcje miały `mode`: observe = nic nie wysyłało → oba kanały wyłączone.
+        channels_default = data.get(OPT_MODE) != MODE_OBSERVE
         on_resolve = data.get(OPT_ON_RESOLVE)
         if on_resolve not in (ON_RESOLVE_UPDATE, ON_RESOLVE_DISMISS):
             on_resolve = ON_RESOLVE_UPDATE
@@ -176,7 +173,8 @@ class Options:
                 else DEFAULT_CHANNELS[sev]
             )
         return cls(
-            mode=mode,
+            push_enabled=_bool(data.get(OPT_PUSH_ENABLED), channels_default),
+            persistent_enabled=_bool(data.get(OPT_PERSISTENT_ENABLED), channels_default),
             startup_grace=startup
             if startup is not None
             else timedelta(seconds=DEFAULT_STARTUP_GRACE_S),
@@ -209,7 +207,8 @@ class Options:
     def to_mapping(self) -> dict[str, Any]:
         """Płaski słownik — wartości domyślne formularza opcji."""
         result: dict[str, Any] = {
-            OPT_MODE: self.mode,
+            OPT_PUSH_ENABLED: self.push_enabled,
+            OPT_PERSISTENT_ENABLED: self.persistent_enabled,
             OPT_STARTUP_GRACE: int(self.startup_grace.total_seconds()),
             OPT_ON_RESOLVE: self.on_resolve,
             OPT_RETENTION_DAYS: self.retention_days,

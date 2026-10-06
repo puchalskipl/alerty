@@ -1,20 +1,4 @@
-snooze:
-  fields:
-    entity_id:
-      required: true
-      selector:
-        entity:
-          domain: binary_sensor
-          multiple: true
-    duration:
-      required: true
-      default:
-        hours: 4
-      selector:
-        duration:
-          enable_day: true
-
-unsnooze:
+dismiss:
   fields:
     entity_id:
       required: true
@@ -23,7 +7,7 @@ unsnooze:
           domain: binary_sensor
           multiple: true
 
-acknowledge:
+undismiss:
   fields:
     entity_id:
       required: true
@@ -32,7 +16,16 @@ acknowledge:
           domain: binary_sensor
           multiple: true
 
-enable:
+mute:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: true
+
+unmute:
   fields:
     entity_id:
       required: true
@@ -42,6 +35,15 @@ enable:
           multiple: true
 
 disable:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: true
+
+enable:
   fields:
     entity_id:
       required: true

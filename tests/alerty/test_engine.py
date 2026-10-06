@@ -1,4 +1,4 @@
-"""Silnik na atrapie HA: nasłuch, cisza po starcie, catch-up, tryb obserwacji, usługi, restart."""
+"""Silnik na atrapie HA: nasłuch, cisza po starcie, catch-up, kanały, działania użytkownika, restart."""
 
 from __future__ import annotations
 
@@ -9,7 +9,12 @@ import pytest
 from tests import fakes  # instaluje atrapy homeassistant.* przed importem silnika
 from tests.fakes import Clock, FakeHass
 
-from custom_components.alerty.const import MODE_NORMAL, OPT_MODE, STORE_JOURNAL_KEY, STORE_STATE_KEY
+from custom_components.alerty.const import (
+    OPT_PERSISTENT_ENABLED,
+    OPT_PUSH_ENABLED,
+    STORE_JOURNAL_KEY,
+    STORE_STATE_KEY,
+)
 from custom_components.alerty.engine import Engine
 from custom_components.alerty.options import Options
 from custom_components.alerty.store import AlertyStore
@@ -29,16 +34,16 @@ def _reset_clock():
     yield
 
 
-async def make_engine(hass: FakeHass, mode: str = MODE_NORMAL) -> Engine:
+async def make_engine(hass: FakeHass, **options) -> Engine:
     store = AlertyStore(hass)
     state, journal = await store.async_load()
-    engine = Engine(hass, Options.from_mapping({OPT_MODE: mode}), state, journal, store)
+    engine = Engine(hass, Options.from_mapping(options), state, journal, store)
     await engine.async_start()
     return engine
 
 
-async def start_with_grace(hass: FakeHass, mode: str = MODE_NORMAL) -> Engine:
-    engine = await make_engine(hass, mode)
+async def start_with_grace(hass: FakeHass, **options) -> Engine:
+    engine = await make_engine(hass, **options)
     assert await hass.fire_timers() == 1  # upływ ciszy po starcie → catch-up
     assert engine.ready
     return engine
@@ -68,15 +73,17 @@ async def test_events_in_grace_are_ignored_then_catch_up_sends():
     assert hass.storage[STORE_JOURNAL_KEY]["entries"][0]["id"] == entry.id
 
 
-async def test_observe_mode_sends_nothing_but_journals():
+async def test_channels_off_send_nothing_but_journal():
     hass = FakeHass()
-    engine = await start_with_grace(hass, mode="observe")
+    engine = await start_with_grace(hass, **{OPT_PUSH_ENABLED: False, OPT_PERSISTENT_ENABLED: False})
     await hass.states.set(EID, "on", ATTRS)
     assert hass.services.calls == [] and hass.persistent() == {}
-    assert engine.summary()["total"] == 1 and engine.summary()["mode"] == "observe"
+    summary = engine.summary()
+    assert summary["total"] == 1
+    assert summary["push_enabled"] is False and summary["persistent_enabled"] is False
     entry = engine.journal.entries[0]
-    assert entry.notified["simulated"] is True and entry.notified["push"] == ["admins"]
-    assert engine.state.active[EID].persistent_id is not None  # id zarezerwowany, nie wysłany
+    assert entry.notified["push"] == [] and entry.notified["persistent"] is False
+    assert engine.state.active[EID].persistent_id is None
 
 
 async def test_resolve_updates_persistent_with_snapshot():
@@ -156,16 +163,28 @@ async def test_reminder_via_tick():
     assert engine.journal.entries[0].reminders == 1
 
 
-async def test_snooze_service_and_expiry():
+async def test_mute_dismiss_disable_actions():
     hass = FakeHass()
     engine = await start_with_grace(hass)
-    await engine.async_snooze([EID], timedelta(hours=1))
+    await engine.async_user_action("mute", [EID])
     await hass.states.set(EID, "on", ATTRS)
-    assert hass.services.calls == [] and engine.summary()["total"] == 0
-    assert engine.summary()["snoozed"][0]["entity_id"] == EID
-    Clock.advance(hours=1)
+    assert hass.services.calls == [] and hass.persistent() == {}
+    summary = engine.summary()
+    assert summary["total"] == 1 and summary["active"][0]["muted"] and summary["muted"] == [EID]
+    assert hass.storage[STORE_STATE_KEY]["muted"] == [EID]
+
+    await engine.async_user_action("unmute", [EID])
+    Clock.advance(hours=30)
     await hass.tick()
-    assert len(hass.services.calls) == 1 and engine.summary()["total"] == 1
+    assert hass.services.calls == []  # trwające wystąpienie dalej ciche
+
+    await engine.async_user_action("dismiss", [EID])
+    assert engine.summary()["total"] == 0 and engine.summary()["dismissed"][0]["entity_id"] == EID
+    await engine.async_user_action("undismiss", [EID])
+    await engine.async_user_action("disable", [EID])
+    assert engine.summary()["total"] == 0 and engine.summary()["disabled"] == [EID]
+    await engine.async_user_action("enable", [EID])
+    assert engine.summary()["total"] == 1 and hass.services.calls == []
 
 
 async def test_push_error_is_recorded_not_raised():
@@ -192,11 +211,11 @@ async def test_cleanup_orphans_and_resolved():
     assert pid not in hass.persistent()
 
 
-async def test_apply_options_switches_mode_and_reschedules_cleanup():
+async def test_apply_options_switches_channels_and_reschedules_cleanup():
     hass = FakeHass()
-    engine = await start_with_grace(hass, mode="observe")
+    engine = await start_with_grace(hass, **{OPT_PUSH_ENABLED: False})
     assert [t["active"] for t in hass.time_changes] == [True]
-    engine.apply_options(Options.from_mapping({OPT_MODE: MODE_NORMAL, "cleanup_time": "03:00:00"}))
+    engine.apply_options(Options.from_mapping({"cleanup_time": "03:00:00"}))
     assert [t["active"] for t in hass.time_changes] == [False, True]
     assert hass.time_changes[1]["hour"] == 3
     await hass.states.set(EID, "on", ATTRS)

@@ -10,18 +10,12 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 
 from .const import DOMAIN
-from .engine import Engine
+from .engine import USER_ACTIONS, Engine
 
-SERVICE_SNOOZE = "snooze"
-SERVICE_UNSNOOZE = "unsnooze"
-SERVICE_ACKNOWLEDGE = "acknowledge"
-SERVICE_ENABLE = "enable"
-SERVICE_DISABLE = "disable"
 SERVICE_CLEANUP = "cleanup"
 SERVICE_EXPORT_JOURNAL = "export_journal"
 
 ENTITY_SCHEMA = vol.Schema({vol.Required("entity_id"): cv.entity_ids})
-SNOOZE_SCHEMA = ENTITY_SCHEMA.extend({vol.Required("duration"): cv.positive_time_period})
 CLEANUP_SCHEMA = vol.Schema({vol.Optional("orphans", default=False): cv.boolean})
 EXPORT_SCHEMA = vol.Schema(
     {
@@ -41,20 +35,11 @@ def _engine(hass: HomeAssistant) -> Engine:
 
 
 def async_register(hass: HomeAssistant) -> None:
-    async def snooze(call: ServiceCall) -> None:
-        await _engine(hass).async_snooze(call.data["entity_id"], call.data["duration"])
+    def user_action(name: str):
+        async def handler(call: ServiceCall) -> None:
+            await _engine(hass).async_user_action(name, call.data["entity_id"])
 
-    async def unsnooze(call: ServiceCall) -> None:
-        await _engine(hass).async_unsnooze(call.data["entity_id"])
-
-    async def acknowledge(call: ServiceCall) -> None:
-        await _engine(hass).async_acknowledge(call.data["entity_id"])
-
-    async def enable(call: ServiceCall) -> None:
-        await _engine(hass).async_enable(call.data["entity_id"])
-
-    async def disable(call: ServiceCall) -> None:
-        await _engine(hass).async_disable(call.data["entity_id"])
+        return handler
 
     async def cleanup(call: ServiceCall) -> ServiceResponse:
         dismissed = await _engine(hass).async_cleanup(orphans=call.data["orphans"])
@@ -68,15 +53,13 @@ def async_register(hass: HomeAssistant) -> None:
         )
         return {"count": len(entries), "entries": entries}
 
-    registrations = (
-        (SERVICE_SNOOZE, snooze, SNOOZE_SCHEMA, SupportsResponse.NONE),
-        (SERVICE_UNSNOOZE, unsnooze, ENTITY_SCHEMA, SupportsResponse.NONE),
-        (SERVICE_ACKNOWLEDGE, acknowledge, ENTITY_SCHEMA, SupportsResponse.NONE),
-        (SERVICE_ENABLE, enable, ENTITY_SCHEMA, SupportsResponse.NONE),
-        (SERVICE_DISABLE, disable, ENTITY_SCHEMA, SupportsResponse.NONE),
+    registrations = [
+        (name, user_action(name), ENTITY_SCHEMA, SupportsResponse.NONE) for name in USER_ACTIONS
+    ]
+    registrations += [
         (SERVICE_CLEANUP, cleanup, CLEANUP_SCHEMA, SupportsResponse.OPTIONAL),
         (SERVICE_EXPORT_JOURNAL, export_journal, EXPORT_SCHEMA, SupportsResponse.ONLY),
-    )
+    ]
     for name, handler, schema, response in registrations:
         if not hass.services.has_service(DOMAIN, name):
             hass.services.async_register(

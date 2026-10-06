@@ -7,7 +7,6 @@ from datetime import time, timedelta
 import pytest
 
 from custom_components.alerty.const import (
-    MODE_NORMAL,
     MODE_OBSERVE,
     ON_RESOLVE_DISMISS,
     ON_RESOLVE_UPDATE,
@@ -17,7 +16,9 @@ from custom_components.alerty.const import (
     OPT_MODE,
     OPT_ON_RESOLVE,
     OPT_PERSISTENT,
+    OPT_PERSISTENT_ENABLED,
     OPT_PUSH_CLICK_PATH,
+    OPT_PUSH_ENABLED,
     OPT_PUSH_TARGETS,
     OPT_REMINDER,
     OPT_RETENTION_DAYS,
@@ -28,7 +29,7 @@ from custom_components.alerty.options import Options, parse_duration, parse_time
 
 def test_defaults():
     o = Options.from_mapping({})
-    assert o.mode == MODE_OBSERVE and not o.sending
+    assert o.push_enabled and o.persistent_enabled
     assert o.startup_grace == timedelta(minutes=5)
     assert o.push_targets == {"error": ("admins",), "warning": (), "info": ()}
     assert o.persistent == {"error": True, "warning": True, "info": False}
@@ -44,7 +45,7 @@ def test_defaults():
 def test_from_mapping_parses_form_values():
     o = Options.from_mapping(
         {
-            OPT_MODE: MODE_NORMAL,
+            OPT_PUSH_ENABLED: False,
             OPT_STARTUP_GRACE: {"hours": 0, "minutes": 2, "seconds": 30},
             OPT_PUSH_TARGETS.format(severity="warning"): ["notify.mobile", "admins"],
             OPT_PUSH_TARGETS.format(severity="error"): [],
@@ -60,7 +61,7 @@ def test_from_mapping_parses_form_values():
             OPT_CHANNEL.format(severity="error"): "   ",
         }
     )
-    assert o.sending
+    assert not o.push_enabled and o.persistent_enabled
     assert o.startup_grace == timedelta(minutes=2, seconds=30)
     assert o.push_targets["warning"] == ("mobile", "admins")
     assert o.push_targets["error"] == ()
@@ -76,7 +77,7 @@ def test_from_mapping_parses_form_values():
 def test_invalid_values_fall_back():
     o = Options.from_mapping(
         {
-            OPT_MODE: "chaos",
+            OPT_PUSH_ENABLED: "chaos",
             OPT_ON_RESOLVE: "explode",
             OPT_STARTUP_GRACE: "abc",
             OPT_RETENTION_DAYS: -5,
@@ -85,7 +86,7 @@ def test_invalid_values_fall_back():
             OPT_PUSH_TARGETS.format(severity="error"): 7,
         }
     )
-    assert o.mode == MODE_OBSERVE and o.on_resolve == ON_RESOLVE_UPDATE
+    assert o.push_enabled and o.on_resolve == ON_RESOLVE_UPDATE
     assert o.startup_grace == timedelta(minutes=5)
     assert o.retention_days == 30 and o.cleanup_time == time(4, 10)
     assert o.push_click_path == "/lovelace/system"
@@ -95,7 +96,7 @@ def test_invalid_values_fall_back():
 def test_to_mapping_round_trip():
     original = Options.from_mapping(
         {
-            OPT_MODE: MODE_NORMAL,
+            OPT_PERSISTENT_ENABLED: False,
             OPT_REMINDER.format(severity="warning"): 3600,
             OPT_PUSH_TARGETS.format(severity="info"): ["mobile"],
         }
@@ -105,6 +106,18 @@ def test_to_mapping_round_trip():
     assert mapping[OPT_STARTUP_GRACE] == 300
     assert mapping[OPT_REMINDER.format(severity="info")] == 0
     assert mapping[OPT_CLEANUP_TIME] == "04:10:00"
+    assert mapping[OPT_PUSH_ENABLED] is True and mapping[OPT_PERSISTENT_ENABLED] is False
+    assert OPT_MODE not in mapping
+
+
+def test_legacy_mode_maps_to_channels():
+    observe = Options.from_mapping({OPT_MODE: MODE_OBSERVE})
+    assert not observe.push_enabled and not observe.persistent_enabled
+    normal = Options.from_mapping({OPT_MODE: "normal"})
+    assert normal.push_enabled and normal.persistent_enabled
+    # Nowe klucze wygrywają ze starym trybem (przełącznik zapisał je obok `mode`).
+    mixed = Options.from_mapping({OPT_MODE: MODE_OBSERVE, OPT_PUSH_ENABLED: True})
+    assert mixed.push_enabled and not mixed.persistent_enabled
 
 
 @pytest.mark.parametrize(

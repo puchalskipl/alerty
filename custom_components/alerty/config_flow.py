@@ -12,17 +12,16 @@ from homeassistant.helpers import selector
 
 from .const import (
     DOMAIN,
-    MODE_NORMAL,
-    MODE_OBSERVE,
     ON_RESOLVE_DISMISS,
     ON_RESOLVE_UPDATE,
     OPT_CHANNEL,
     OPT_CLEANUP_AFTER_DAYS,
     OPT_CLEANUP_TIME,
-    OPT_MODE,
     OPT_ON_RESOLVE,
     OPT_PERSISTENT,
+    OPT_PERSISTENT_ENABLED,
     OPT_PUSH_CLICK_PATH,
+    OPT_PUSH_ENABLED,
     OPT_PUSH_TARGETS,
     OPT_REMINDER,
     OPT_RETENTION_DAYS,
@@ -77,13 +76,10 @@ class AlertyOptionsFlow(config_entries.OptionsFlow):
                     notify_services.append(target)
 
         schema: dict[Any, Any] = {
-            vol.Required(OPT_MODE, default=current.mode): selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=[MODE_OBSERVE, MODE_NORMAL],
-                    translation_key="mode",
-                    mode=selector.SelectSelectorMode.DROPDOWN,
-                )
-            ),
+            vol.Required(OPT_PUSH_ENABLED, default=current.push_enabled): selector.BooleanSelector(),
+            vol.Required(
+                OPT_PERSISTENT_ENABLED, default=current.persistent_enabled
+            ): selector.BooleanSelector(),
             vol.Required(
                 OPT_STARTUP_GRACE, default=_duration_dict(current.startup_grace, False)
             ): selector.DurationSelector(selector.DurationSelectorConfig(enable_day=False)),

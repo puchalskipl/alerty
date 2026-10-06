@@ -8,10 +8,10 @@ import pytest
 
 from custom_components.alerty import logic
 from custom_components.alerty.const import (
-    MODE_NORMAL,
     ON_RESOLVE_DISMISS,
-    OPT_MODE,
     OPT_ON_RESOLVE,
+    OPT_PERSISTENT_ENABLED,
+    OPT_PUSH_ENABLED,
     OPT_PUSH_TARGETS,
 )
 from custom_components.alerty.logic import (
@@ -51,7 +51,7 @@ def defn(**overrides) -> AlertDef:
 
 
 def opts(**overrides) -> Options:
-    return Options.from_mapping({OPT_MODE: MODE_NORMAL, **overrides})
+    return Options.from_mapping(overrides)
 
 
 def only(actions, kind):
@@ -143,7 +143,7 @@ def test_row1_error_default_creates_persistent_and_push(now):
     assert data["importance"] == "high"
     assert data["priority"] == "high" and data["ttl"] == 0
     assert data["clickAction"] == "/lovelace/system"
-    assert data["notification_icon"] == "mdi:cpu-64-bit"
+    assert "notification_icon" not in data  # push bez ikony (decyzja usera 2026-10-06)
 
     rec = state.active[EID]
     assert rec.persistent_id == PID and rec.push_sent and rec.last_push_ts == now
@@ -199,34 +199,28 @@ def test_row1_empty_targets_means_no_push(now):
     assert len(only(actions, CreatePersistent)) == 1
 
 
-def test_row2_snoozed_only_journal(now):
+def test_row2_muted_only_journal_but_visible(now):
     state = State()
-    state.snoozes[EID] = now + timedelta(hours=4)
+    state.muted.add(EID)
     actions = logic.handle_state(state, EID, defn(), "on", now, opts())
     assert [type(a) for a in actions] == [JournalOpen]
-    assert actions[0].entry.snoozed is True
+    assert actions[0].entry.muted is True
     rec = state.active[EID]
-    assert rec.suppressed and not rec.notified
+    assert rec.silenced and not rec.notified
     summary = logic.active_summary(state, now)
-    assert summary["total"] == 0 and summary["errors_count"] == 0
-    assert summary["snoozed"][0]["entity_id"] == EID
+    assert summary["total"] == 1 and summary["errors_count"] == 1  # wyciszony jest na liście
+    assert summary["active"][0]["muted"] is True and summary["muted"] == [EID]
 
 
-def test_row2_disabled_only_journal(now):
+def test_row2_disabled_only_journal_and_hidden(now):
     state = State()
     state.disabled.add(EID)
     actions = logic.handle_state(state, EID, defn(), "on", now, opts())
     assert [type(a) for a in actions] == [JournalOpen]
     assert actions[0].entry.disabled is True
-    assert state.active[EID].disabled
-
-
-def test_expired_snooze_does_not_suppress(now):
-    state = State()
-    state.snoozes[EID] = now - timedelta(minutes=1)
-    actions = logic.handle_state(state, EID, defn(), "on", now, opts())
-    assert len(only(actions, SendPush)) == 1
-    assert EID not in state.snoozes
+    assert state.active[EID].silenced
+    summary = logic.active_summary(state, now)
+    assert summary["total"] == 0 and summary["active"] == [] and summary["disabled"] == [EID]
 
 
 def test_on_without_severity_is_ignored(now):
@@ -404,10 +398,15 @@ def test_row9_reminder_after_interval(now):
     assert len(only(again, SendPush)) == 1 and state.active[EID].reminders == 2
 
 
-def test_row9_no_reminder_when_acknowledged_or_no_targets_or_warning(now):
+def test_row9_no_reminder_when_dismissed_silenced_no_targets_or_warning(now):
     state = State()
     journal_id = _activate(state, now)
-    assert logic.acknowledge(state, EID) == [JournalMark(journal_id, acknowledged=True)]
+    assert logic.dismiss(state, EID) == [JournalMark(journal_id, dismissed=True)]
+    assert logic.tick(state, now + timedelta(hours=30), opts()) == []
+
+    state = State()
+    _activate(state, now)
+    logic.mute(state, EID)
     assert logic.tick(state, now + timedelta(hours=30), opts()) == []
 
     state = State()
@@ -419,61 +418,116 @@ def test_row9_no_reminder_when_acknowledged_or_no_targets_or_warning(now):
     assert logic.tick(state, now + timedelta(days=5), opts()) == []
 
 
-def test_row10_snooze_expiry_sends_pending_notifications(now):
+def test_row9_no_reminder_when_push_channel_off_or_push_never_sent(now):
     state = State()
-    state.snoozes[EID] = now + timedelta(hours=1)
     _activate(state, now)
-    assert logic.tick(state, now + timedelta(minutes=30), opts()) == []
-    actions = logic.tick(state, now + timedelta(hours=1), opts())
-    assert len(only(actions, CreatePersistent)) == 1
-    assert len(only(actions, SendPush)) == 1
+    assert logic.tick(state, now + timedelta(hours=30), opts(**{OPT_PUSH_ENABLED: False})) == []
+
+    state = State()
+    _activate(state, now, o=opts(**{OPT_PUSH_ENABLED: False}))  # push nie poszedł
+    assert not state.active[EID].push_sent
+    assert logic.tick(state, now + timedelta(hours=30), opts()) == []  # po włączeniu bez nadrabiania
+
+
+# --------------------------------------------------------------------------
+# Kanały globalne
+# --------------------------------------------------------------------------
+
+
+def test_channels_off_send_nothing_but_journal(now):
+    state = State()
+    o = opts(**{OPT_PUSH_ENABLED: False, OPT_PERSISTENT_ENABLED: False})
+    actions = logic.handle_state(state, EID, defn(), "on", now, o)
+    assert [type(a) for a in actions] == [JournalOpen]
     rec = state.active[EID]
-    assert rec.snoozed_until is None and rec.notified and EID not in state.snoozes
-    assert logic.active_summary(state, now + timedelta(hours=1))["total"] == 1
+    assert rec.persistent_id is None and not rec.push_sent and not rec.silenced
+    assert logic.active_summary(state, now)["total"] == 1
+
+
+def test_push_off_still_creates_persistent(now):
+    state = State()
+    actions = logic.handle_state(state, EID, defn(), "on", now, opts(**{OPT_PUSH_ENABLED: False}))
+    assert len(only(actions, CreatePersistent)) == 1 and only(actions, SendPush) == []
+
+
+def test_persistent_off_skips_restore_on_catch_up(now):
+    state = State()
+    _activate(state, now)
+    actions = logic.catch_up(
+        state,
+        {EID: (defn(), "on")},
+        set(),
+        now + timedelta(minutes=6),
+        opts(**{OPT_PERSISTENT_ENABLED: False}),
+    )
+    assert only(actions, CreatePersistent) == []
 
 
 # --------------------------------------------------------------------------
-# #11–#13 — usługi
+# Działania użytkownika
 # --------------------------------------------------------------------------
 
 
-def test_row11_snooze_active_then_unsnooze_no_resend(now):
+def test_dismiss_hides_current_occurrence_only(now):
     state = State()
     journal_id = _activate(state, now)
-    until = now + timedelta(hours=4)
-    assert logic.snooze(state, EID, until) == [JournalMark(journal_id, snoozed=True)]
-    assert state.active[EID].snoozed_until == until
-    assert logic.active_summary(state, now)["total"] == 0
-    assert logic.tick(state, now + timedelta(hours=2), opts()) == []  # bez przypomnień
-    assert logic.unsnooze(state, EID, now + timedelta(hours=1), opts()) == []  # już zgłoszony
-    assert state.active[EID].snoozed_until is None
+    assert logic.dismiss(state, EID) == [JournalMark(journal_id, dismissed=True)]
+    assert logic.dismiss(state, EID) == []  # drugi raz bez zmian
+    summary = logic.active_summary(state, now)
+    assert summary["total"] == 0 and summary["active"] == []
+    assert [d["entity_id"] for d in summary["dismissed"]] == [EID]
+    # Ustąpił → odrzucenie znika razem z wystąpieniem; kolejne zgłasza się normalnie.
+    logic.handle_state(state, EID, defn(), "off", now + timedelta(hours=1), opts(), {PID})
+    actions = logic.handle_state(state, EID, defn(), "on", now + timedelta(hours=2), opts())
+    assert len(only(actions, SendPush)) == 1 and len(only(actions, CreatePersistent)) == 1
+    assert logic.active_summary(state, now)["total"] == 1
 
 
-def test_row11_snooze_inactive_then_alert_fires_suppressed(now):
+def test_undismiss_restores_without_sending(now):
     state = State()
-    assert logic.snooze(state, EID, now + timedelta(days=7)) == []
-    actions = logic.handle_state(state, EID, defn(), "on", now + timedelta(hours=1), opts())
-    assert [type(a) for a in actions] == [JournalOpen]
-    assert logic.active_summary(state, now)["snoozed"][0]["entity_id"] == EID
+    _activate(state, now)
+    logic.dismiss(state, EID)
+    assert logic.undismiss(state, EID) == []
+    assert logic.active_summary(state, now)["total"] == 1
+    assert logic.undismiss(State(), EID) == [] and logic.dismiss(State(), EID) == []
 
 
-def test_row13_disable_enable(now):
+def test_mute_active_then_unmute_sends_only_on_next_occurrence(now):
     state = State()
-    assert logic.disable(state, EID) == []
-    actions = logic.handle_state(state, EID, defn(), "on", now, opts())
-    assert [type(a) for a in actions] == [JournalOpen]
-    journal_id = actions[0].entry.id
-    enabled = logic.enable(state, EID, now + timedelta(minutes=5), opts())
-    assert len(only(enabled, CreatePersistent)) == 1 and len(only(enabled, SendPush)) == 1
-    assert EID not in state.disabled and not state.active[EID].disabled
+    journal_id = _activate(state, now)
+    assert logic.mute(state, EID) == [JournalMark(journal_id, muted=True)]
+    assert state.active[EID].silenced and logic.active_summary(state, now)["total"] == 1
+    assert logic.unmute(state, EID) == []
+    assert EID not in state.muted and state.active[EID].silenced  # trwające dalej ciche
+    assert logic.tick(state, now + timedelta(hours=30), opts()) == []
+    logic.handle_state(state, EID, defn(), "off", now + timedelta(hours=31), opts(), {PID})
+    actions = logic.handle_state(state, EID, defn(), "on", now + timedelta(hours=32), opts())
+    assert len(only(actions, SendPush)) == 1
 
+
+def test_mute_inactive_applies_to_next_occurrences(now):
+    state = State()
+    assert logic.mute(state, EID) == []
+    for hour in (1, 3):
+        actions = logic.handle_state(state, EID, defn(), "on", now + timedelta(hours=hour), opts())
+        assert [type(a) for a in actions] == [JournalOpen]
+        logic.handle_state(state, EID, defn(), "off", now + timedelta(hours=hour + 1), opts())
+
+
+def test_disable_enable(now):
+    state = State()
+    journal_id = _activate(state, now)
     assert logic.disable(state, EID) == [JournalMark(journal_id, disabled=True)]
-    assert logic.active_summary(state, now)["total"] == 0
-    assert logic.enable(state, EID, now, opts()) == []  # już zgłoszony — bez powtórki
-
-
-def test_acknowledge_without_record(now):
-    assert logic.acknowledge(State(), EID) == []
+    summary = logic.active_summary(state, now)
+    assert summary["total"] == 0 and summary["disabled"] == [EID] and summary["dismissed"] == []
+    assert logic.enable(state, EID) == []  # włączenie nic nie wysyła
+    assert EID not in state.disabled and state.active[EID].silenced
+    assert logic.active_summary(state, now)["total"] == 1
+    # wyłączony nieaktywny: kolejne wystąpienie ciche
+    state2 = State()
+    logic.disable(state2, EID)
+    actions = logic.handle_state(state2, EID, defn(), "on", now, opts())
+    assert [type(a) for a in actions] == [JournalOpen]
 
 
 def test_journal_false_skips_journal_but_still_notifies(now):
@@ -557,8 +611,9 @@ def test_row15_persistent_removed(now):
 def test_state_round_trip(now):
     state = State()
     _activate(state, now)
-    state.snoozes["binary_sensor.alert_b"] = now + timedelta(hours=1)
+    state.muted.add("binary_sensor.alert_b")
     state.disabled.add("binary_sensor.alert_c")
+    state.active[EID].dismissed = True
     state.resolved_persistents["alert_d"] = now
     restored = State.from_dict(state.to_dict())
     assert restored.to_dict() == state.to_dict()
@@ -566,6 +621,26 @@ def test_state_round_trip(now):
     assert rec.on_ts == now and rec.targets == ("admins",) and rec.persistent_id == PID
     assert State.from_dict(None).to_dict() == State().to_dict()
     assert State.from_dict({"active": {"x": {"entity_id": "x"}}}).active == {}
+
+
+def test_state_from_legacy_format(now):
+    """Stan sprzed 2026-10-07: snoozes pomijane, disabled/snoozed_until -> silenced."""
+    iso = now.isoformat()
+    legacy = {
+        "active": {
+            EID: {"entity_id": EID, "on_ts": iso, "snoozed_until": iso},
+            "binary_sensor.alert_d": {"entity_id": "binary_sensor.alert_d", "on_ts": iso, "disabled": True},
+            "binary_sensor.alert_n": {"entity_id": "binary_sensor.alert_n", "on_ts": iso, "acknowledged": True},
+        },
+        "snoozes": {EID: iso},
+        "disabled": ["binary_sensor.alert_d"],
+    }
+    state = State.from_dict(legacy)
+    assert state.active[EID].silenced and state.active["binary_sensor.alert_d"].silenced
+    assert not state.active["binary_sensor.alert_n"].silenced
+    assert not state.active["binary_sensor.alert_n"].dismissed
+    assert state.muted == set() and state.disabled == {"binary_sensor.alert_d"}
+    assert "snoozes" not in state.to_dict()
 
 
 def test_active_summary_orders_by_severity_then_time(now):

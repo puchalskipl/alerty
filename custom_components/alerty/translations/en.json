@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Alerty",
-        "description": "Observes binary_sensor.alert_* entities (defined in templates/alerting.yaml), sends notifications, keeps a journal and lets you snooze alerts. Starts in observe mode (sends nothing) — configure options after adding."
+        "description": "Observes binary_sensor.alert_* entities (defined in templates/alerting.yaml), sends notifications, keeps a journal and lets you dismiss, mute or disable alerts."
       }
     },
     "abort": {
@@ -16,40 +16,39 @@
       "init": {
         "title": "Alert settings",
         "data": {
-          "mode": "Mode",
+          "push_enabled": "Push to phone",
+          "persistent_enabled": "Notifications in HA",
           "startup_grace": "Grace period after HA start",
           "push_targets_error": "Errors — push to",
-          "persistent_error": "Errors — persistent notification",
+          "persistent_error": "Errors — notification in HA",
           "reminder_error": "Errors — remind every",
           "channel_error": "Errors — Android channel",
           "push_targets_warning": "Warnings — push to",
-          "persistent_warning": "Warnings — persistent notification",
+          "persistent_warning": "Warnings — notification in HA",
           "reminder_warning": "Warnings — remind every",
           "channel_warning": "Warnings — Android channel",
           "push_targets_info": "Info — push to",
-          "persistent_info": "Info — persistent notification",
+          "persistent_info": "Info — notification in HA",
           "reminder_info": "Info — remind every",
           "channel_info": "Info — Android channel",
           "on_resolve": "When an alert resolves",
-          "cleanup_after_days": "Dismiss resolved persistents after (days)",
+          "cleanup_after_days": "Dismiss resolved notifications after (days)",
           "cleanup_time": "Cleanup time",
           "retention_days": "Journal retention (days)",
           "push_click_path": "Push opens (path)"
+        },
+        "data_description": {
+          "push_enabled": "Off: no push for any alert. Nothing is caught up when switched back on.",
+          "persistent_enabled": "Off: no notifications in the HA bell. Nothing is caught up when switched back on."
         }
       }
     }
   },
   "selector": {
-    "mode": {
-      "options": {
-        "observe": "Observe (send nothing)",
-        "normal": "Send"
-      }
-    },
     "on_resolve": {
       "options": {
-        "update": "Update persistent notification",
-        "dismiss": "Dismiss persistent notification"
+        "update": "Update the notification",
+        "dismiss": "Dismiss the notification"
       }
     }
   },
@@ -60,39 +59,42 @@
       "warnings_count": { "name": "Active alerts - warnings" },
       "infos_count": { "name": "Active alerts - info" },
       "journal": { "name": "Alert journal" },
-      "snoozed": { "name": "Snoozed alerts" }
+      "snoozed": { "name": "Muted alerts" }
     },
     "switch": {
-      "sending": { "name": "Alert sending" }
+      "push": { "name": "Push to phone" },
+      "persistent": { "name": "Notifications in HA" }
     }
   },
   "services": {
-    "snooze": {
-      "name": "Snooze",
-      "description": "Snoozes an alert for the given time: not counted, no push or reminders.",
-      "fields": {
-        "entity_id": { "name": "Alert", "description": "binary_sensor.alert_* entity." },
-        "duration": { "name": "Duration", "description": "How long to snooze." }
-      }
-    },
-    "unsnooze": {
-      "name": "Unsnooze",
-      "description": "Ends a snooze early.",
+    "dismiss": {
+      "name": "Dismiss",
+      "description": "Hides the current occurrence from the active list and stops reminders. The next occurrence notifies normally.",
       "fields": { "entity_id": { "name": "Alert", "description": "binary_sensor.alert_* entity." } }
     },
-    "acknowledge": {
-      "name": "Acknowledge",
-      "description": "Stops reminders for an ongoing alert; it stays counted as active.",
+    "undismiss": {
+      "name": "Restore",
+      "description": "Brings a dismissed occurrence back to the active list (sends nothing).",
       "fields": { "entity_id": { "name": "Alert", "description": "binary_sensor.alert_* entity." } }
     },
-    "enable": {
-      "name": "Enable",
-      "description": "Re-enables a disabled alert.",
+    "mute": {
+      "name": "Mute",
+      "description": "Mutes the alert until unmuted: this and later occurrences send nothing; the alert stays visible.",
+      "fields": { "entity_id": { "name": "Alert", "description": "binary_sensor.alert_* entity." } }
+    },
+    "unmute": {
+      "name": "Unmute",
+      "description": "Ends muting. An ongoing occurrence still sends nothing; the next one notifies.",
       "fields": { "entity_id": { "name": "Alert", "description": "binary_sensor.alert_* entity." } }
     },
     "disable": {
       "name": "Disable",
-      "description": "Permanently silences an alert (until enabled) without removing its definition.",
+      "description": "Disables the alert until enabled: sends nothing and is hidden from the active list.",
+      "fields": { "entity_id": { "name": "Alert", "description": "binary_sensor.alert_* entity." } }
+    },
+    "enable": {
+      "name": "Enable",
+      "description": "Re-enables a disabled alert. An ongoing occurrence sends nothing; the next one notifies.",
       "fields": { "entity_id": { "name": "Alert", "description": "binary_sensor.alert_* entity." } }
     },
     "cleanup": {

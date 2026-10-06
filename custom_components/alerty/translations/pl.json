@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Alerty",
-        "description": "Integracja obserwuje encje binary_sensor.alert_* (definicje w templates/alerting.yaml), wysyła powiadomienia, prowadzi dziennik i pozwala wyciszać alerty. Po dodaniu ustaw opcje — na start działa w trybie obserwacji (nic nie wysyła)."
+        "description": "Integracja obserwuje encje binary_sensor.alert_* (definicje w templates/alerting.yaml), wysyła powiadomienia, prowadzi dziennik i pozwala odrzucać, wyciszać i wyłączać alerty."
       }
     },
     "abort": {
@@ -16,32 +16,34 @@
       "init": {
         "title": "Ustawienia alertów",
         "data": {
-          "mode": "Tryb",
+          "push_enabled": "Push na telefon",
+          "persistent_enabled": "Powiadomienia w HA",
           "startup_grace": "Cisza po starcie HA",
           "push_targets_error": "Błędy — push do",
-          "persistent_error": "Błędy — powiadomienie w dzwonku",
+          "persistent_error": "Błędy — powiadomienie w HA",
           "reminder_error": "Błędy — przypominaj co",
           "channel_error": "Błędy — kanał Androida",
           "push_targets_warning": "Ostrzeżenia — push do",
-          "persistent_warning": "Ostrzeżenia — powiadomienie w dzwonku",
+          "persistent_warning": "Ostrzeżenia — powiadomienie w HA",
           "reminder_warning": "Ostrzeżenia — przypominaj co",
           "channel_warning": "Ostrzeżenia — kanał Androida",
           "push_targets_info": "Informacje — push do",
-          "persistent_info": "Informacje — powiadomienie w dzwonku",
+          "persistent_info": "Informacje — powiadomienie w HA",
           "reminder_info": "Informacje — przypominaj co",
           "channel_info": "Informacje — kanał Androida",
           "on_resolve": "Po ustąpieniu alertu",
-          "cleanup_after_days": "Sprzątaj ustąpione z dzwonka po (dni)",
+          "cleanup_after_days": "Sprzątaj ustąpione z powiadomień w HA po (dni)",
           "cleanup_time": "Godzina sprzątania",
           "retention_days": "Dziennik — ile dni trzymać",
           "push_click_path": "Push otwiera (ścieżka)"
         },
         "data_description": {
-          "mode": "Obserwacja: pisze dziennik i loguje, co by wysłał, ale nic nie wysyła. Wysyłanie: normalna praca.",
+          "push_enabled": "Wyłączone: żaden alert nie wysyła pusha. Po włączeniu nic nie jest nadrabiane. To samo co przełącznik na widoku Alertowanie.",
+          "persistent_enabled": "Wyłączone: żaden alert nie tworzy powiadomienia w dzwonku HA. Po włączeniu nic nie jest nadrabiane.",
           "startup_grace": "Po starcie HA zdarzenia są ignorowane przez ten czas, potem stan jest uzgadniany.",
           "push_targets_error": "Usługi notify (np. admins, mobile). Atrybut notify_targets alertu nadpisuje.",
           "persistent_error": "Atrybut notify_persistent alertu nadpisuje.",
-          "reminder_error": "Zero = bez przypomnień. Przypomnienie nie idzie po potwierdzeniu ani w czasie wyciszenia.",
+          "reminder_error": "Zero = bez przypomnień. Przypomnienie idzie tylko po wysłanym pushu, nie dla odrzuconych, wyciszonych i wyłączonych.",
           "channel_error": "Nazwa kanału powiadomień w aplikacji Companion; dźwięk i priorytet ustawia się na telefonie. Zmiana nazwy tworzy nowy kanał.",
           "on_resolve": "Zaktualizuj: wpis zmienia się na „✅ … ustąpiło, trwało …” z treścią z chwili wystąpienia. Usuń: znika z dzwonka.",
           "cleanup_after_days": "Dotyczy wpisów zaktualizowanych po ustąpieniu.",
@@ -51,16 +53,10 @@
     }
   },
   "selector": {
-    "mode": {
-      "options": {
-        "observe": "Obserwacja (nic nie wysyła)",
-        "normal": "Wysyłanie"
-      }
-    },
     "on_resolve": {
       "options": {
-        "update": "Zaktualizuj wpis w dzwonku",
-        "dismiss": "Usuń z dzwonka"
+        "update": "Zaktualizuj powiadomienie",
+        "dismiss": "Usuń powiadomienie"
       }
     }
   },
@@ -74,51 +70,46 @@
       "snoozed": { "name": "Wyciszone alerty" }
     },
     "switch": {
-      "sending": { "name": "Wysyłanie alertów" }
+      "push": { "name": "Push na telefon" },
+      "persistent": { "name": "Powiadomienia w HA" }
     }
   },
   "services": {
-    "snooze": {
+    "dismiss": {
+      "name": "Odrzuć",
+      "description": "Ukrywa bieżące wystąpienie z listy aktywnych i zatrzymuje przypomnienia. Kolejne wystąpienie zgłasza się normalnie.",
+      "fields": { "entity_id": { "name": "Alert", "description": "Encja binary_sensor.alert_*." } }
+    },
+    "undismiss": {
+      "name": "Przywróć",
+      "description": "Przywraca odrzucone wystąpienie na listę aktywnych (nic nie wysyła).",
+      "fields": { "entity_id": { "name": "Alert", "description": "Encja binary_sensor.alert_*." } }
+    },
+    "mute": {
       "name": "Wycisz",
-      "description": "Wycisza alert na podany czas: nie liczy się do aktywnych, nie wysyła push ani przypomnień. Po upływie czasu wraca (i nadrabia zgłoszenie, jeśli nadal trwa).",
-      "fields": {
-        "entity_id": { "name": "Alert", "description": "Encja binary_sensor.alert_*." },
-        "duration": { "name": "Na jak długo", "description": "Czas wyciszenia." }
-      }
+      "description": "Wycisza alert do odwołania: to i kolejne wystąpienia nic nie wysyłają; alert jest dalej widoczny.",
+      "fields": { "entity_id": { "name": "Alert", "description": "Encja binary_sensor.alert_*." } }
     },
-    "unsnooze": {
-      "name": "Cofnij wyciszenie",
-      "description": "Kończy wyciszenie przed czasem.",
-      "fields": {
-        "entity_id": { "name": "Alert", "description": "Encja binary_sensor.alert_*." }
-      }
+    "unmute": {
+      "name": "Wyłącz wyciszenie",
+      "description": "Kończy wyciszenie. Trwające wystąpienie nadal nic nie wysyła — powiadomi dopiero kolejne.",
+      "fields": { "entity_id": { "name": "Alert", "description": "Encja binary_sensor.alert_*." } }
     },
-    "acknowledge": {
-      "name": "Potwierdź",
-      "description": "Zatrzymuje przypomnienia dla trwającego alertu; alert nadal jest liczony jako aktywny.",
-      "fields": {
-        "entity_id": { "name": "Alert", "description": "Encja binary_sensor.alert_*." }
-      }
+    "disable": {
+      "name": "Wyłącz na stałe",
+      "description": "Wyłącza alert do włączenia: nic nie wysyła i znika z listy aktywnych.",
+      "fields": { "entity_id": { "name": "Alert", "description": "Encja binary_sensor.alert_*." } }
     },
     "enable": {
       "name": "Włącz",
-      "description": "Cofa trwałe wyłączenie alertu.",
-      "fields": {
-        "entity_id": { "name": "Alert", "description": "Encja binary_sensor.alert_*." }
-      }
-    },
-    "disable": {
-      "name": "Wyłącz",
-      "description": "Trwale wycisza alert (do czasu włączenia) bez usuwania definicji.",
-      "fields": {
-        "entity_id": { "name": "Alert", "description": "Encja binary_sensor.alert_*." }
-      }
+      "description": "Włącza wyłączony alert. Trwające wystąpienie wraca na listę, ale nic nie wysyła — powiadomi dopiero kolejne.",
+      "fields": { "entity_id": { "name": "Alert", "description": "Encja binary_sensor.alert_*." } }
     },
     "cleanup": {
-      "name": "Sprzątnij dzwonek",
+      "name": "Sprzątnij powiadomienia",
       "description": "Usuwa z dzwonka powiadomienia ustąpionych alertów starsze niż ustawiony czas i przycina dziennik.",
       "fields": {
-        "orphans": { "name": "Także osierocone", "description": "Usuń też powiadomienia alert_* nieznane integracji (np. ze starego dispatchera)." }
+        "orphans": { "name": "Także osierocone", "description": "Usuń też powiadomienia alert_* nieznane integracji." }
       }
     },
     "export_journal": {

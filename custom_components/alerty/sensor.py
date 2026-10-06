@@ -1,4 +1,4 @@
-"""Encje sensor: aktywne alerty, liczniki per severity, dziennik, wyciszone."""
+"""Encje sensor: aktywne alerty, liczniki per severity, dziennik, wyciszone i wyłączone."""
 
 from __future__ import annotations
 
@@ -19,8 +19,12 @@ SUMMARY_ATTRS = (
     "warnings",
     "infos",
     "active",
+    "dismissed",
     "since",
-    "mode",
+    "muted",
+    "disabled",
+    "push_enabled",
+    "persistent_enabled",
 )
 
 
@@ -33,7 +37,7 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddE
             CountSensor(engine, "warnings_count", "mdi:alert"),
             CountSensor(engine, "infos_count", "mdi:information"),
             JournalSensor(engine),
-            SnoozedSensor(engine),
+            SilencedSensor(engine),
         ]
     )
 
@@ -80,16 +84,20 @@ class JournalSensor(AlertyEntity, SensorEntity):
         return self.engine.journal_view()
 
 
-class SnoozedSensor(AlertyEntity, SensorEntity):
-    _attr_icon = "mdi:bell-sleep"
+class SilencedSensor(AlertyEntity, SensorEntity):
+    """Liczba alertów wyciszonych albo wyłączonych na stałe."""
+
+    _attr_icon = "mdi:bell-off"
 
     def __init__(self, engine: Engine) -> None:
         super().__init__(engine, "snoozed")
 
     @property
     def native_value(self) -> int:
-        return len(self.engine.summary()["snoozed"])
+        summary = self.engine.summary()
+        return len(set(summary["muted"]) | set(summary["disabled"]))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {"items": self.engine.summary()["snoozed"]}
+        summary = self.engine.summary()
+        return {"muted": summary["muted"], "disabled": summary["disabled"]}

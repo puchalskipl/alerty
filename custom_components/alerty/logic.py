@@ -2,12 +2,22 @@
 
 Funkcje tego modułu dostają stan integracji (`State`) i informacje o alercie,
 modyfikują stan i zwracają listę akcji zewnętrznych (powiadomienia, dziennik),
-które wykonuje `engine.py`. Dzięki temu każdy wiersz tabeli decyzyjnej z planu
+które wykonuje `engine.py`. Dzięki temu każdy wiersz tabeli decyzyjnej
 jest testowalny lokalnie, bez HA.
 
 Kluczowe uproszczenie: decyzja zależy tylko od pary (efektywny nowy stan encji,
 czy istnieje aktywny rekord) — ten sam kod obsługuje zmianę stanu, catch-up po
 starcie HA i powrót encji z `unavailable`.
+
+Działania użytkownika (od 2026-10-07):
+- **odrzuć** — tylko bieżące wystąpienie: znika z listy aktywnych, bez przypomnień;
+  kolejne wystąpienie zgłasza się normalnie;
+- **wycisz** (do odwołania) — to i kolejne wystąpienia nic nie wysyłają; alert jest
+  widoczny i liczony; po odwołaniu wysyła dopiero przy następnym wystąpieniu;
+- **wyłącz na stałe** — jak wyciszenie, ale alert znika z listy aktywnych;
+  po włączeniu też nic nie wysyła do następnego wystąpienia.
+Globalnie: kanały push i „Powiadomienia w HA” (dzwonek) można wyłączyć w opcjach;
+po włączeniu nic nie jest nadrabiane.
 """
 
 from __future__ import annotations
@@ -29,7 +39,6 @@ from .const import (
     ATTR_NOTIFY_TARGETS,
     ATTR_SEVERITY,
     ATTR_TITLE,
-    DEFAULT_ICON,
     MISSING_RECHECK_S,
     ON_RESOLVE_UPDATE,
     PERSISTENT_PREFIX,
@@ -186,14 +195,11 @@ class ActiveRecord:
     push_sent: bool = False
     last_push_ts: datetime | None = None
     reminders: int = 0
-    acknowledged: bool = False
-    snoozed_until: datetime | None = None
-    disabled: bool = False
+    # To wystąpienie nic nie wysyła (wyciszone/wyłączone w chwili włączenia albo w trakcie).
+    # Odwołanie wyciszenia/wyłączenia tego nie cofa — wysyła dopiero kolejne wystąpienie.
+    silenced: bool = False
+    dismissed: bool = False  # odrzucone: ukryte z listy aktywnych, bez przypomnień
     journal: bool = True
-
-    @property
-    def suppressed(self) -> bool:
-        return self.disabled or self.snoozed_until is not None
 
     @property
     def notified(self) -> bool:
@@ -218,9 +224,8 @@ class ActiveRecord:
             "push_sent": self.push_sent,
             "last_push_ts": _iso(self.last_push_ts),
             "reminders": self.reminders,
-            "acknowledged": self.acknowledged,
-            "snoozed_until": _iso(self.snoozed_until),
-            "disabled": self.disabled,
+            "silenced": self.silenced,
+            "dismissed": self.dismissed,
             "journal": self.journal,
         }
 
@@ -230,6 +235,10 @@ class ActiveRecord:
         entity_id = data.get("entity_id")
         if not on_ts or not entity_id:
             return None
+        # Stary format (przed 2026-10-07): disabled / snoozed_until wyciszały wystąpienie.
+        silenced = bool(
+            data.get("silenced", False) or data.get("disabled", False) or data.get("snoozed_until")
+        )
         return cls(
             entity_id=str(entity_id),
             title=str(data.get("title") or entity_id),
@@ -248,9 +257,8 @@ class ActiveRecord:
             push_sent=bool(data.get("push_sent", False)),
             last_push_ts=_from_iso(data.get("last_push_ts")),
             reminders=int(data.get("reminders") or 0),
-            acknowledged=bool(data.get("acknowledged", False)),
-            snoozed_until=_from_iso(data.get("snoozed_until")),
-            disabled=bool(data.get("disabled", False)),
+            silenced=silenced,
+            dismissed=bool(data.get("dismissed", False)),
             journal=bool(data.get("journal", True)),
         )
 
@@ -261,17 +269,11 @@ class State:
 
     active: dict[str, ActiveRecord] = field(default_factory=dict)
     resolved_persistents: dict[str, datetime] = field(default_factory=dict)
-    snoozes: dict[str, datetime] = field(default_factory=dict)
-    disabled: set[str] = field(default_factory=set)
+    muted: set[str] = field(default_factory=set)  # wyciszone do odwołania
+    disabled: set[str] = field(default_factory=set)  # wyłączone na stałe
 
-    def snoozed_until(self, entity_id: str, now: datetime) -> datetime | None:
-        until = self.snoozes.get(entity_id)
-        if until is None:
-            return None
-        if until <= now:
-            del self.snoozes[entity_id]
-            return None
-        return until
+    def is_silenced(self, entity_id: str) -> bool:
+        return entity_id in self.muted or entity_id in self.disabled
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -279,7 +281,7 @@ class State:
             "resolved_persistents": {
                 pid: _iso(ts) for pid, ts in self.resolved_persistents.items()
             },
-            "snoozes": {eid: _iso(ts) for eid, ts in self.snoozes.items()},
+            "muted": sorted(self.muted),
             "disabled": sorted(self.disabled),
         }
 
@@ -296,10 +298,8 @@ class State:
             ts = _from_iso(raw)
             if ts:
                 state.resolved_persistents[pid] = ts
-        for eid, raw in (data.get("snoozes") or {}).items():
-            ts = _from_iso(raw)
-            if ts:
-                state.snoozes[eid] = ts
+        # `snoozes` (wyciszenia czasowe sprzed 2026-10-07) celowo pomijane.
+        state.muted = {str(e) for e in (data.get("muted") or [])}
         state.disabled = {str(e) for e in (data.get("disabled") or [])}
         return state
 
@@ -325,8 +325,8 @@ class JournalClose:
 @dataclass(frozen=True)
 class JournalMark:
     journal_id: str
-    snoozed: bool | None = None
-    acknowledged: bool | None = None
+    muted: bool | None = None
+    dismissed: bool | None = None
     disabled: bool | None = None
     reminders: int | None = None
 
@@ -378,7 +378,7 @@ Action = (
 
 
 def persistent_id_for(entity_id: str, on_ts: datetime) -> str:
-    """Osobny persistent na każde wystąpienie (historia w dzwonku), jak w starym dispatcherze."""
+    """Osobny persistent na każde wystąpienie (historia w dzwonku)."""
     return f"{PERSISTENT_PREFIX}{entity_id}_{int(on_ts.timestamp())}"
 
 
@@ -387,13 +387,15 @@ def push_tag_for(entity_id: str) -> str:
 
 
 def push_data(rec: ActiveRecord, opts: Options) -> dict[str, Any]:
-    """Pole `data` powiadomienia push dla aplikacji Companion (Android)."""
+    """Pole `data` powiadomienia push dla aplikacji Companion (Android).
+
+    Bez `notification_icon` — telefon pokazuje domyślną ikonę aplikacji HA.
+    """
     severity = rec.severity if rec.severity in SEVERITIES else "info"
     data: dict[str, Any] = {
         "tag": push_tag_for(rec.entity_id),
         "channel": rec.channel or opts.channels.get(severity, ""),
         "importance": PUSH_IMPORTANCE[severity],
-        "notification_icon": rec.icon or DEFAULT_ICON,
         "color": PUSH_COLORS[severity],
         "group": PUSH_GROUP,
         "clickAction": rec.click_path or opts.push_click_path,
@@ -427,14 +429,14 @@ def _targets_for(defn: AlertDef, opts: Options) -> tuple[str, ...]:
 
 
 def _notify_actions(rec: ActiveRecord, opts: Options, now: datetime) -> list[Action]:
-    """Persistent + push dla rekordu, którego jeszcze nie zgłoszono."""
+    """Persistent + push dla nowego wystąpienia — tylko we włączonych kanałach."""
     actions: list[Action] = []
-    if rec.want_persistent and rec.persistent_id is None:
+    if opts.persistent_enabled and rec.want_persistent and rec.persistent_id is None:
         rec.persistent_id = persistent_id_for(rec.entity_id, rec.on_ts)
         actions.append(
             CreatePersistent(rec.persistent_id, rec.title, rec.body_on, rec.journal_id)
         )
-    if rec.targets and not rec.push_sent:
+    if opts.push_enabled and rec.targets and not rec.push_sent:
         rec.push_sent = True
         rec.last_push_ts = now
         actions.append(
@@ -453,7 +455,7 @@ def _resolve_actions(
     off_approx: bool = False,
     dismiss_only: bool = False,
 ) -> list[Action]:
-    """Wiersz #3 tabeli: alert ustąpił."""
+    """Alert ustąpił: domknij dziennik, zaktualizuj albo usuń persistent."""
     actions: list[Action] = []
     if rec.journal:
         actions.append(JournalClose(rec.entity_id, rec.journal_id, now, off_approx))
@@ -469,6 +471,12 @@ def _resolve_actions(
             actions.append(DismissPersistent(pid))
     state.active.pop(rec.entity_id, None)
     return actions
+
+
+def _mark(rec: ActiveRecord | None, **flags: Any) -> list[Action]:
+    if rec is None or not rec.journal_id:
+        return []
+    return [JournalMark(rec.journal_id, **flags)]
 
 
 # --------------------------------------------------------------------------
@@ -487,20 +495,20 @@ def handle_state(
     *,
     source: str = "change",
 ) -> list[Action]:
-    """Wiersze #1–#6 tabeli decyzyjnej: nowy (efektywny) stan encji alertu."""
+    """Nowy (efektywny) stan encji alertu."""
     rec = state.active.get(entity_id)
 
-    if effective is None:  # #5 — unavailable/unknown: rekord zostaje
+    if effective is None:  # unavailable/unknown: rekord zostaje
         return []
 
     if effective == "on":
-        if rec is not None:  # #6 — trwa; odśwież bieżącą treść
+        if rec is not None:  # trwa; odśwież bieżącą treść
             if defn is not None and defn.body != rec.body_now:
                 rec.body_now = defn.body
             return []
         if defn is None:  # encja bez severity — nie jest alertem
             return []
-        snoozed_until = state.snoozed_until(entity_id, now)
+        muted = entity_id in state.muted
         disabled = entity_id in state.disabled
         rec = ActiveRecord(
             entity_id=entity_id,
@@ -516,8 +524,7 @@ def handle_state(
             click_path=defn.click_path,
             targets=_targets_for(defn, opts),
             want_persistent=_wants_persistent(defn, opts),
-            snoozed_until=snoozed_until,
-            disabled=disabled,
+            silenced=muted or disabled,
             journal=defn.journal,
         )
         state.active[entity_id] = rec
@@ -532,21 +539,21 @@ def handle_state(
                         severity=defn.severity,
                         body=defn.body,
                         on=now,
-                        snoozed=snoozed_until is not None,
+                        muted=muted,
                         disabled=disabled,
                         source=source,
                     )
                 )
             )
-        if rec.suppressed:  # #2 — wyciszony/wyłączony: tylko dziennik
+        if rec.silenced:  # wyciszony/wyłączony: tylko dziennik
             return actions
-        actions.extend(_notify_actions(rec, opts, now))  # #1
+        actions.extend(_notify_actions(rec, opts, now))
         return actions
 
     # effective == "off"
-    if rec is None:  # #4 — nic; osierocony wpis dziennika domknąć w przybliżeniu
+    if rec is None:  # osierocony wpis dziennika domknąć w przybliżeniu
         return [JournalClose(entity_id, None, now, True)]
-    return _resolve_actions(  # #3
+    return _resolve_actions(
         state, rec, now, opts, existing_persistents, off_approx=(source == "catchup")
     )
 
@@ -558,7 +565,7 @@ def catch_up(
     now: datetime,
     opts: Options,
 ) -> list[Action]:
-    """Wiersz #8: po starcie HA (lub przeładowaniu) uzgodnij stan z rzeczywistością.
+    """Po starcie HA (lub przeładowaniu) uzgodnij stan z rzeczywistością.
 
     `snapshot` = {entity_id: (AlertDef|None, efektywny stan)} dla wszystkich
     encji z prefiksem alertu, które istnieją w HA.
@@ -572,7 +579,11 @@ def catch_up(
         if effective == "on" and rec is not None:
             if defn is not None:
                 rec.body_now = defn.body
-            if rec.persistent_id and rec.persistent_id not in existing_persistents:
+            if (
+                opts.persistent_enabled
+                and rec.persistent_id
+                and rec.persistent_id not in existing_persistents
+            ):
                 # Persistenty nie przeżywają restartu — odtwórz z treścią z chwili ON.
                 actions.append(
                     CreatePersistent(
@@ -596,7 +607,7 @@ def handle_missing(
     existing_persistents: AbstractSet[str],
     still_missing: bool,
 ) -> list[Action]:
-    """Wiersz #7: encja zniknęła (np. template.reload) i po odczekaniu nadal jej nie ma."""
+    """Encja zniknęła (np. template.reload) i po odczekaniu nadal jej nie ma."""
     rec = state.active.get(entity_id)
     if rec is None or not still_missing:
         return []
@@ -606,23 +617,18 @@ def handle_missing(
 
 
 def tick(state: State, now: datetime, opts: Options) -> list[Action]:
-    """Wiersze #9–#10: przypomnienia i wygasanie wyciszeń (co minutę)."""
+    """Przypomnienia (co minutę): trwający, zgłoszony pushem, niewyciszony, nieodrzucony."""
     actions: list[Action] = []
-    for entity_id in [eid for eid, ts in state.snoozes.items() if ts <= now]:
-        del state.snoozes[entity_id]
+    if not opts.push_enabled:
+        return actions
     for rec in list(state.active.values()):
-        if rec.snoozed_until is not None and rec.snoozed_until <= now:  # #10
-            rec.snoozed_until = None
-            if not rec.disabled and not rec.notified:
-                actions.extend(_notify_actions(rec, opts, now))
-            continue
-        if rec.suppressed or rec.acknowledged or not rec.targets:
+        if rec.silenced or rec.dismissed or not rec.push_sent or not rec.targets:
             continue
         interval = opts.reminder.get(rec.severity)
         if interval is None:
             continue
         last = rec.last_push_ts or rec.on_ts
-        if now - last >= interval:  # #9
+        if now - last >= interval:
             rec.last_push_ts = now
             rec.reminders += 1
             actions.append(
@@ -635,66 +641,64 @@ def tick(state: State, now: datetime, opts: Options) -> list[Action]:
                     reminder=True,
                 )
             )
-            actions.append(JournalMark(rec.journal_id, reminders=rec.reminders))
+            if rec.journal_id:
+                actions.append(JournalMark(rec.journal_id, reminders=rec.reminders))
     return actions
 
 
 # --------------------------------------------------------------------------
-# Usługi
+# Usługi (działania użytkownika)
 # --------------------------------------------------------------------------
 
 
-def snooze(state: State, entity_id: str, until: datetime) -> list[Action]:
-    """Wiersz #11: wycisz do `until` — znika z liczników, bez push i przypomnień."""
-    state.snoozes[entity_id] = until
+def dismiss(state: State, entity_id: str) -> list[Action]:
+    """Odrzuć bieżące wystąpienie: znika z listy aktywnych, bez przypomnień."""
+    rec = state.active.get(entity_id)
+    if rec is None or rec.dismissed:
+        return []
+    rec.dismissed = True
+    return _mark(rec, dismissed=True)
+
+
+def undismiss(state: State, entity_id: str) -> list[Action]:
+    """Przywróć odrzucone wystąpienie na listę aktywnych (bez wysyłania)."""
+    rec = state.active.get(entity_id)
+    if rec is None or not rec.dismissed:
+        return []
+    rec.dismissed = False
+    return []
+
+
+def mute(state: State, entity_id: str) -> list[Action]:
+    """Wycisz do odwołania: to i kolejne wystąpienia nic nie wysyłają."""
+    state.muted.add(entity_id)
     rec = state.active.get(entity_id)
     if rec is None:
         return []
-    rec.snoozed_until = until
-    return [JournalMark(rec.journal_id, snoozed=True)]
+    rec.silenced = True
+    return _mark(rec, muted=True)
 
 
-def unsnooze(state: State, entity_id: str, now: datetime, opts: Options) -> list[Action]:
-    """Cofnięcie wyciszenia przed terminem (wraca do liczników, nadrabia zgłoszenie)."""
-    state.snoozes.pop(entity_id, None)
-    rec = state.active.get(entity_id)
-    if rec is None or rec.snoozed_until is None:
-        return []
-    rec.snoozed_until = None
-    if rec.disabled or rec.notified:
-        return []
-    return _notify_actions(rec, opts, now)
-
-
-def acknowledge(state: State, entity_id: str) -> list[Action]:
-    """Wiersz #12: koniec przypomnień, alert nadal liczony."""
-    rec = state.active.get(entity_id)
-    if rec is None:
-        return []
-    rec.acknowledged = True
-    return [JournalMark(rec.journal_id, acknowledged=True)]
+def unmute(state: State, entity_id: str) -> list[Action]:
+    """Odwołaj wyciszenie; trwające wystąpienie nadal nic nie wysyła."""
+    state.muted.discard(entity_id)
+    return []
 
 
 def disable(state: State, entity_id: str) -> list[Action]:
-    """Wiersz #13: wyciszenie bez terminu."""
+    """Wyłącz na stałe: nic nie wysyła i znika z listy aktywnych."""
     state.disabled.add(entity_id)
     rec = state.active.get(entity_id)
     if rec is None:
         return []
-    rec.disabled = True
-    return [JournalMark(rec.journal_id, disabled=True)]
+    rec.silenced = True
+    return _mark(rec, disabled=True)
 
 
-def enable(state: State, entity_id: str, now: datetime, opts: Options) -> list[Action]:
-    """Wiersz #13: włącz z powrotem; aktywny i niezgłoszony → zgłoś teraz."""
+def enable(state: State, entity_id: str) -> list[Action]:
+    """Włącz z powrotem; trwające wystąpienie wraca na listę, ale nic nie wysyła."""
     state.disabled.discard(entity_id)
-    rec = state.active.get(entity_id)
-    if rec is None or not rec.disabled:
-        return []
-    rec.disabled = False
-    if rec.snoozed_until is not None or rec.notified:
-        return []
-    return _notify_actions(rec, opts, now)
+    return []
 
 
 def cleanup(
@@ -704,7 +708,7 @@ def cleanup(
     existing_persistents: AbstractSet[str],
     orphans: bool = False,
 ) -> list[Action]:
-    """Wiersz #14: sprzątanie persistentów ustąpionych alertów (i duchów)."""
+    """Sprzątanie persistentów ustąpionych alertów (i duchów)."""
     actions: list[Action] = []
     dismissed: set[str] = set()
     threshold = timedelta(days=opts.cleanup_after_days)
@@ -726,7 +730,7 @@ def cleanup(
 
 
 def persistent_removed(state: State, notification_id: str) -> bool:
-    """Wiersz #15: użytkownik zamknął powiadomienie w dzwonku — nie wskrzeszać."""
+    """Użytkownik zamknął powiadomienie w dzwonku — nie wskrzeszać."""
     changed = False
     for rec in state.active.values():
         if rec.persistent_id == notification_id:
@@ -742,51 +746,40 @@ def persistent_removed(state: State, notification_id: str) -> bool:
 # --------------------------------------------------------------------------
 
 
-def active_summary(state: State, now: datetime) -> dict[str, Any]:
-    """Atrybuty `sensor.aktywne_alerty` i `sensor.alerty_wyciszone`."""
-    counted = [rec for rec in state.active.values() if not rec.suppressed]
-    counted.sort(key=lambda r: (SEVERITIES.index(r.severity), r.on_ts))
-    snoozed = [rec for rec in state.active.values() if rec.suppressed]
-    counts = {sev: sum(1 for r in counted if r.severity == sev) for sev in SEVERITIES}
-    snoozed_items = [
-        {
-            "entity_id": rec.entity_id,
-            "title": rec.title,
-            "until": _iso(rec.snoozed_until),
-            "disabled": rec.disabled,
-        }
-        for rec in snoozed
-    ]
-    for entity_id in sorted(state.disabled):
-        if entity_id not in state.active:
-            snoozed_items.append(
-                {"entity_id": entity_id, "title": entity_id, "until": None, "disabled": True}
-            )
-    for entity_id, until in sorted(state.snoozes.items()):
-        if entity_id not in state.active and until > now:
-            snoozed_items.append(
-                {"entity_id": entity_id, "title": entity_id, "until": _iso(until), "disabled": False}
-            )
+def _item(state: State, rec: ActiveRecord) -> dict[str, Any]:
     return {
-        "total": len(counted),
+        "entity_id": rec.entity_id,
+        "title": rec.title,
+        "severity": rec.severity,
+        "body": rec.body_on,
+        "body_now": rec.body_now,
+        "since": _iso(rec.on_ts),
+        "muted": rec.entity_id in state.muted,
+    }
+
+
+def active_summary(state: State, now: datetime) -> dict[str, Any]:
+    """Atrybuty `sensor.aktywne_alerty` i `sensor.alerty_wyciszone`.
+
+    Lista aktywnych = trwające, nieodrzucone i niewyłączone (wyciszone są na liście,
+    z flagą `muted`). Odrzucone osobno; wyciszone i wyłączone jako listy entity_id
+    (także nietrwające — do katalogu i sekcji „Wyłączone”).
+    """
+    ordered = sorted(state.active.values(), key=lambda r: (SEVERITIES.index(r.severity), r.on_ts))
+    visible = [r for r in ordered if not r.dismissed and r.entity_id not in state.disabled]
+    dismissed = [r for r in ordered if r.dismissed and r.entity_id not in state.disabled]
+    counts = {sev: sum(1 for r in visible if r.severity == sev) for sev in SEVERITIES}
+    return {
+        "total": len(visible),
         "errors_count": counts["error"],
         "warnings_count": counts["warning"],
         "infos_count": counts["info"],
-        "errors": [r.title for r in counted if r.severity == "error"],
-        "warnings": [r.title for r in counted if r.severity == "warning"],
-        "infos": [r.title for r in counted if r.severity == "info"],
-        "active": [
-            {
-                "entity_id": r.entity_id,
-                "title": r.title,
-                "severity": r.severity,
-                "body": r.body_on,
-                "body_now": r.body_now,
-                "since": _iso(r.on_ts),
-                "acknowledged": r.acknowledged,
-            }
-            for r in counted
-        ],
+        "errors": [r.title for r in visible if r.severity == "error"],
+        "warnings": [r.title for r in visible if r.severity == "warning"],
+        "infos": [r.title for r in visible if r.severity == "info"],
+        "active": [_item(state, r) for r in visible],
+        "dismissed": [_item(state, r) for r in dismissed],
         "since": {r.entity_id: _iso(r.on_ts) for r in state.active.values()},
-        "snoozed": snoozed_items,
+        "muted": sorted(state.muted),
+        "disabled": sorted(state.disabled),
     }

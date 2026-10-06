@@ -25,7 +25,9 @@ ATTR_FRIENDLY_NAME = "friendly_name"
 PERSISTENT_PREFIX = "alert_"
 
 # Klucze opcji wpisu konfiguracyjnego (options flow).
-OPT_MODE = "mode"
+OPT_MODE = "mode"  # tylko odczyt starych opcji (observe → oba kanały wyłączone)
+OPT_PUSH_ENABLED = "push_enabled"  # kanał push na telefon — globalnie wł./wył.
+OPT_PERSISTENT_ENABLED = "persistent_enabled"  # kanał „Powiadomienia w HA” (dzwonek)
 OPT_STARTUP_GRACE = "startup_grace"
 OPT_PUSH_TARGETS = "push_targets_{severity}"
 OPT_PERSISTENT = "persistent_{severity}"
@@ -37,8 +39,7 @@ OPT_CLEANUP_TIME = "cleanup_time"
 OPT_PUSH_CLICK_PATH = "push_click_path"
 OPT_CHANNEL = "channel_{severity}"
 
-MODE_OBSERVE = "observe"
-MODE_NORMAL = "normal"
+MODE_OBSERVE = "observe"  # stara wartość OPT_MODE
 ON_RESOLVE_UPDATE = "update"
 ON_RESOLVE_DISMISS = "dismiss"
 
@@ -60,7 +61,6 @@ DEFAULT_CHANNELS = {
 PUSH_IMPORTANCE = {"error": "high", "warning": "default", "info": "low"}
 PUSH_COLORS = {"error": "#db4437", "warning": "#f4b400", "info": "#4285f4"}
 PUSH_GROUP = "alerty"
-DEFAULT_ICON = "mdi:alert-circle"
 
 # Treści powiadomień (po polsku, jak reszta UI).
 TEXT_RESOLVED_TITLE = "✅ {title}"
@@ -92,5 +92,6 @@ ENTITY_IDS = {
     "infos_count": "sensor.aktywne_alerty_info_count",
     "journal": "sensor.alert_dziennik",
     "snoozed": "sensor.alerty_wyciszone",
-    "sending": "switch.alerty_wysylanie",
+    "push": "switch.alerty_push",
+    "persistent": "switch.alerty_powiadomienia_ha",
 }
