@@ -167,7 +167,14 @@ class Journal:
         return None
 
     def open(self, entry: JournalEntry) -> JournalEntry:
-        self.entries.append(entry)
+        """Dodaje wpis z zachowaniem kolejności chronologicznej.
+
+        Wpis może mieć początek w przeszłości (alert włączony w trakcie trwania wystąpienia).
+        """
+        index = len(self.entries)
+        while index > 0 and self.entries[index - 1].on > entry.on:
+            index -= 1
+        self.entries.insert(index, entry)
         self.dirty = True
         return entry
 

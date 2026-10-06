@@ -212,13 +212,12 @@ def test_row2_muted_only_journal_but_visible(now):
     assert summary["active"][0]["muted"] is True and summary["muted"] == [EID]
 
 
-def test_row2_disabled_only_journal_and_hidden(now):
+def test_row2_disabled_no_journal_and_hidden(now):
     state = State()
     state.disabled.add(EID)
     actions = logic.handle_state(state, EID, defn(), "on", now, opts())
-    assert [type(a) for a in actions] == [JournalOpen]
-    assert actions[0].entry.disabled is True
-    assert state.active[EID].silenced
+    assert actions == []  # wyłączony: ani powiadomień, ani wpisu w dzienniku
+    assert state.active[EID].silenced and not state.active[EID].journal_open
     summary = logic.active_summary(state, now)
     assert summary["total"] == 0 and summary["active"] == [] and summary["disabled"] == [EID]
 
@@ -333,7 +332,7 @@ def test_row8_catch_up(now):
     state.active[gone] = ActiveRecord(gone, "Gone", "info", "x", now, "j-gone")
     off_eid = "binary_sensor.alert_was_on"
     state.active[off_eid] = ActiveRecord(
-        off_eid, "Was on", "warning", "y", now - timedelta(hours=3), "j-off", persistent_id="alert_" + off_eid
+        off_eid, "Was on", "warning", "y", now - timedelta(hours=3), "j-off", persistent_id="alert_" + off_eid, journal_open=True
     )
     new_eid = "binary_sensor.alert_new"
     new_def = AlertDef.from_attributes(new_eid, {"severity": "warning", "friendly_name": "New", "message": "n"})
@@ -487,7 +486,7 @@ def test_undismiss_restores_without_sending(now):
     state = State()
     _activate(state, now)
     logic.dismiss(state, EID)
-    assert logic.undismiss(state, EID) == []
+    assert logic.undismiss(state, EID) == []  # bez wysyłki; znacznik „odrzucony” zostaje w dzienniku
     assert logic.active_summary(state, now)["total"] == 1
     assert logic.undismiss(State(), EID) == [] and logic.dismiss(State(), EID) == []
 
@@ -495,7 +494,9 @@ def test_undismiss_restores_without_sending(now):
 def test_mute_active_then_unmute_sends_only_on_next_occurrence(now):
     state = State()
     journal_id = _activate(state, now)
-    assert logic.mute(state, EID) == [JournalMark(journal_id, muted=True)]
+    assert journal_id
+    # Wyciszenie w trakcie nie zmienia wpisu (znacznik = stan z chwili wystąpienia).
+    assert logic.mute(state, EID) == []
     assert state.active[EID].silenced and logic.active_summary(state, now)["total"] == 1
     assert logic.unmute(state, EID) == []
     assert EID not in state.muted and state.active[EID].silenced  # trwające dalej ciche
@@ -517,17 +518,51 @@ def test_mute_inactive_applies_to_next_occurrences(now):
 def test_disable_enable(now):
     state = State()
     journal_id = _activate(state, now)
-    assert logic.disable(state, EID) == [JournalMark(journal_id, disabled=True)]
+    assert journal_id
+    # Wyłączenie trwającego (już zapisanego) wystąpienia: wpis zostaje, bez znacznika.
+    assert logic.disable(state, EID) == []
     summary = logic.active_summary(state, now)
     assert summary["total"] == 0 and summary["disabled"] == [EID] and summary["dismissed"] == []
-    assert logic.enable(state, EID) == []  # włączenie nic nie wysyła
+    assert logic.enable(state, EID) == []  # wpis już był — nic nowego, nic nie wysyła
+    assert logic.enable(State(), EID) == [] and logic.unmute(State(), EID) == []
     assert EID not in state.disabled and state.active[EID].silenced
     assert logic.active_summary(state, now)["total"] == 1
-    # wyłączony nieaktywny: kolejne wystąpienie ciche
-    state2 = State()
-    logic.disable(state2, EID)
-    actions = logic.handle_state(state2, EID, defn(), "on", now, opts())
+
+
+def test_disabled_occurrence_enters_journal_when_enabled(now):
+    state = State()
+    logic.disable(state, EID)
+    assert logic.handle_state(state, EID, defn(), "on", now, opts()) == []
+    later = now + timedelta(hours=2)
+    actions = logic.enable(state, EID)
     assert [type(a) for a in actions] == [JournalOpen]
+    entry = actions[0].entry
+    assert entry.on == now and entry.disabled is False and entry.muted is False  # od początku wystąpienia
+    assert only(logic.handle_state(state, EID, defn(), "on", later, opts()), SendPush) == []
+    # Ponowne wyłączenie: wpis zostaje i jest domykany przy ustąpieniu.
+    logic.disable(state, EID)
+    off = logic.handle_state(state, EID, defn(), "off", later, opts())
+    assert JournalClose(EID, entry.id, later, False) in off
+
+
+def test_disabled_whole_occurrence_never_journaled(now):
+    state = State()
+    logic.disable(state, EID)
+    logic.handle_state(state, EID, defn(), "on", now, opts())
+    off = logic.handle_state(state, EID, defn(), "off", now + timedelta(hours=1), opts())
+    assert off == []
+    assert EID not in state.active
+
+
+def test_dismissed_mark_is_sticky_and_muted_is_snapshot(now):
+    state = State()
+    state.muted.add(EID)
+    actions = logic.handle_state(state, EID, defn(), "on", now, opts())
+    entry = actions[0].entry
+    assert entry.muted is True  # wyciszony w chwili wystąpienia
+    assert logic.unmute(state, EID) == []  # odwołanie nie zmienia wpisu
+    assert logic.dismiss(state, EID) == [JournalMark(entry.id, dismissed=True)]
+    assert logic.undismiss(state, EID) == []  # przywrócenie nie zdejmuje znacznika
 
 
 def test_journal_false_skips_journal_but_still_notifies(now):
@@ -641,6 +676,8 @@ def test_state_from_legacy_format(now):
     assert not state.active["binary_sensor.alert_n"].dismissed
     assert state.muted == set() and state.disabled == {"binary_sensor.alert_d"}
     assert "snoozes" not in state.to_dict()
+    assert state.active["binary_sensor.alert_n"].journal_open is False  # stary rekord bez journal_id
+    assert State.from_dict({"active": {EID: {"entity_id": EID, "on_ts": iso, "journal_id": "j1"}}}).active[EID].journal_open
 
 
 def test_active_summary_orders_by_severity_then_time(now):

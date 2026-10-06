@@ -200,3 +200,9 @@ def test_export_accepts_naive_dates(now):
     assert [e["id"] for e in journal.export(since=naive_since)] == ["b"]
     naive_until = (now - timedelta(minutes=60)).replace(tzinfo=None)
     assert [e["id"] for e in journal.export(until=naive_until)] == ["a"]
+
+
+def test_open_keeps_chronological_order(now):
+    journal = Journal([entry(now, id="a", offset=-60), entry(now, id="b", offset=0)])
+    journal.open(entry(now, id="late", offset=-30))  # alert włączony w trakcie wystąpienia
+    assert [e.id for e in journal.entries] == ["a", "late", "b"]

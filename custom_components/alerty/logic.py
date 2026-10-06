@@ -199,7 +199,11 @@ class ActiveRecord:
     # Odwołanie wyciszenia/wyłączenia tego nie cofa — wysyła dopiero kolejne wystąpienie.
     silenced: bool = False
     dismissed: bool = False  # odrzucone: ukryte z listy aktywnych, bez przypomnień
-    journal: bool = True
+    journal: bool = True  # alert prowadzi dziennik (atrybut `journal`)
+    # Wpis w dzienniku już otwarty. Wystąpienie wyłączone od początku nie ma wpisu,
+    # dopóki ktoś nie włączy alertu w trakcie trwania.
+    journal_open: bool = False
+    muted_at_on: bool = False  # wyciszony w chwili wystąpienia (znacznik do dziennika)
 
     @property
     def notified(self) -> bool:
@@ -227,6 +231,8 @@ class ActiveRecord:
             "silenced": self.silenced,
             "dismissed": self.dismissed,
             "journal": self.journal,
+            "journal_open": self.journal_open,
+            "muted_at_on": self.muted_at_on,
         }
 
     @classmethod
@@ -260,6 +266,11 @@ class ActiveRecord:
             silenced=silenced,
             dismissed=bool(data.get("dismissed", False)),
             journal=bool(data.get("journal", True)),
+            # Stary format: wpis był otwierany zawsze, gdy alert prowadził dziennik.
+            journal_open=bool(
+                data.get("journal_open", bool(data.get("journal_id")) and data.get("journal", True))
+            ),
+            muted_at_on=bool(data.get("muted_at_on", False)),
         )
 
 
@@ -457,7 +468,7 @@ def _resolve_actions(
 ) -> list[Action]:
     """Alert ustąpił: domknij dziennik, zaktualizuj albo usuń persistent."""
     actions: list[Action] = []
-    if rec.journal:
+    if rec.journal_open:  # wyłączony przez całe wystąpienie — brak wpisu, nic do domknięcia
         actions.append(JournalClose(rec.entity_id, rec.journal_id, now, off_approx))
     pid = rec.persistent_id
     if pid and pid in existing_persistents:
@@ -474,9 +485,31 @@ def _resolve_actions(
 
 
 def _mark(rec: ActiveRecord | None, **flags: Any) -> list[Action]:
-    if rec is None or not rec.journal_id:
+    if rec is None or not rec.journal_open:
         return []
     return [JournalMark(rec.journal_id, **flags)]
+
+
+def _open_journal(rec: ActiveRecord) -> list[Action]:
+    """Otwórz wpis dziennika dla wystąpienia (od jego początku, ze stanem z chwili wystąpienia)."""
+    if not rec.journal or rec.journal_open:
+        return []
+    rec.journal_open = True
+    return [
+        JournalOpen(
+            JournalEntry(
+                id=rec.journal_id,
+                entity_id=rec.entity_id,
+                title=rec.title,
+                severity=rec.severity,
+                body=rec.body_on,
+                on=rec.on_ts,
+                muted=rec.muted_at_on,
+                dismissed=rec.dismissed,
+                source=rec.source,
+            )
+        )
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -526,26 +559,12 @@ def handle_state(
             want_persistent=_wants_persistent(defn, opts),
             silenced=muted or disabled,
             journal=defn.journal,
+            muted_at_on=muted,
         )
         state.active[entity_id] = rec
-        actions: list[Action] = []
-        if defn.journal:
-            actions.append(
-                JournalOpen(
-                    JournalEntry(
-                        id=rec.journal_id,
-                        entity_id=entity_id,
-                        title=defn.title,
-                        severity=defn.severity,
-                        body=defn.body,
-                        on=now,
-                        muted=muted,
-                        disabled=disabled,
-                        source=source,
-                    )
-                )
-            )
-        if rec.silenced:  # wyciszony/wyłączony: tylko dziennik
+        # Wyłączony alert nie trafia do dziennika — wpis powstanie, jeśli ktoś go włączy w trakcie.
+        actions: list[Action] = [] if disabled else _open_journal(rec)
+        if rec.silenced:  # wyciszony (tylko dziennik) albo wyłączony (nic)
             return actions
         actions.extend(_notify_actions(rec, opts, now))
         return actions
@@ -641,14 +660,20 @@ def tick(state: State, now: datetime, opts: Options) -> list[Action]:
                     reminder=True,
                 )
             )
-            if rec.journal_id:
-                actions.append(JournalMark(rec.journal_id, reminders=rec.reminders))
+            actions.extend(_mark(rec, reminders=rec.reminders))
     return actions
 
 
 # --------------------------------------------------------------------------
 # Usługi (działania użytkownika)
 # --------------------------------------------------------------------------
+
+
+# Znaczniki w dzienniku (historia, decyzja użytkownika 2026-10-07):
+# - odrzucony — zapisuje się na stałe dla wystąpienia (przywrócenie go nie zdejmuje);
+# - wyciszony — stan z chwili wystąpienia (późniejsze wyciszenie / odwołanie nie zmienia wpisu);
+# - wyłączony — nie zapisuje się: wystąpienie wyłączone przez cały czas nie ma wpisu, a włączone
+#   w trakcie dostaje wpis od początku wystąpienia; ponowne wyłączenie wpisu nie usuwa.
 
 
 def dismiss(state: State, entity_id: str) -> list[Action]:
@@ -661,7 +686,7 @@ def dismiss(state: State, entity_id: str) -> list[Action]:
 
 
 def undismiss(state: State, entity_id: str) -> list[Action]:
-    """Przywróć odrzucone wystąpienie na listę aktywnych (bez wysyłania)."""
+    """Przywróć odrzucone wystąpienie na listę aktywnych (bez wysyłania; znacznik zostaje)."""
     rec = state.active.get(entity_id)
     if rec is None or not rec.dismissed:
         return []
@@ -673,10 +698,9 @@ def mute(state: State, entity_id: str) -> list[Action]:
     """Wycisz do odwołania: to i kolejne wystąpienia nic nie wysyłają."""
     state.muted.add(entity_id)
     rec = state.active.get(entity_id)
-    if rec is None:
-        return []
-    rec.silenced = True
-    return _mark(rec, muted=True)
+    if rec is not None:
+        rec.silenced = True
+    return []
 
 
 def unmute(state: State, entity_id: str) -> list[Action]:
@@ -686,19 +710,21 @@ def unmute(state: State, entity_id: str) -> list[Action]:
 
 
 def disable(state: State, entity_id: str) -> list[Action]:
-    """Wyłącz na stałe: nic nie wysyła i znika z listy aktywnych."""
+    """Wyłącz na stałe: nic nie wysyła i znika z listy aktywnych (wpis w dzienniku zostaje)."""
     state.disabled.add(entity_id)
     rec = state.active.get(entity_id)
-    if rec is None:
-        return []
-    rec.silenced = True
-    return _mark(rec, disabled=True)
+    if rec is not None:
+        rec.silenced = True
+    return []
 
 
 def enable(state: State, entity_id: str) -> list[Action]:
-    """Włącz z powrotem; trwające wystąpienie wraca na listę, ale nic nie wysyła."""
+    """Włącz z powrotem; trwające wystąpienie wraca na listę i do dziennika, ale nic nie wysyła."""
     state.disabled.discard(entity_id)
-    return []
+    rec = state.active.get(entity_id)
+    if rec is None:
+        return []
+    return _open_journal(rec)
 
 
 def cleanup(
