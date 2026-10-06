@@ -192,3 +192,11 @@ def test_legacy_snoozed_entry_reads_as_muted(now):
     data["acknowledged"] = True
     restored = JournalEntry.from_dict(data)
     assert restored.muted is True and restored.dismissed is False
+
+
+def test_export_accepts_naive_dates(now):
+    journal = Journal([entry(now, id="a", offset=-120), entry(now, id="b", offset=-10)])
+    naive_since = (now - timedelta(minutes=60)).replace(tzinfo=None)
+    assert [e["id"] for e in journal.export(since=naive_since)] == ["b"]
+    naive_until = (now - timedelta(minutes=60)).replace(tzinfo=None)
+    assert [e["id"] for e in journal.export(until=naive_until)] == ["a"]

@@ -315,6 +315,11 @@ class Journal:
     ) -> list[dict[str, Any]]:
         result = []
         for entry in self.entries:
+            # Data bez strefy (np. z formularza usługi) = strefa wpisu (lokalna HA).
+            if since and since.tzinfo is None:
+                since = since.replace(tzinfo=entry.on.tzinfo)
+            if until and until.tzinfo is None:
+                until = until.replace(tzinfo=entry.on.tzinfo)
             if since and entry.on < since:
                 continue
             if until and entry.on > until:
