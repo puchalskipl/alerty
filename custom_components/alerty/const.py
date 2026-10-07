@@ -95,4 +95,7 @@ ENTITY_IDS = {
     "snoozed": "sensor.alerty_wyciszone",
     "push": "switch.alerty_push",
     "persistent": "switch.alerty_powiadomienia_ha",
+    "reminder_error": "number.alerty_przypomnienie_bledy",
+    "reminder_warning": "number.alerty_przypomnienie_ostrzezenia",
+    "reminder_info": "number.alerty_przypomnienie_informacje",
 }

@@ -215,8 +215,9 @@ class ActiveRecord:
     push_sent: bool = False
     last_push_ts: datetime | None = None
     reminders: int = 0
-    # To wystąpienie nic nie wysyła (wyciszone/wyłączone w chwili włączenia albo w trakcie).
-    # Odwołanie wyciszenia/wyłączenia tego nie cofa — wysyła dopiero kolejne wystąpienie.
+    # Wystąpienie bez pierwszego powiadomienia (wyciszone/wyłączone w chwili włączenia albo
+    # w trakcie). Odwołanie wyciszenia/wyłączenia go nie nadrabia; przypomnienia patrzą na
+    # bieżące wyciszenie (State.is_silenced), nie na tę flagę.
     silenced: bool = False
     dismissed: bool = False  # odrzucone: ukryte z listy aktywnych, bez przypomnień
     journal: bool = True  # alert prowadzi dziennik (atrybut `journal`)
@@ -666,12 +667,17 @@ def _reminder_interval(rec: ActiveRecord, opts: Options) -> timedelta | None:
 
 
 def tick(state: State, now: datetime, opts: Options) -> list[Action]:
-    """Przypomnienia (co minutę): trwający, zgłoszony pushem, niewyciszony, nieodrzucony."""
+    """Przypomnienia (co minutę): trwający alert z adresatami push, nieodrzucony, teraz niewyciszony.
+
+    Przypomnienie idzie także wtedy, gdy pierwszy push nie poszedł (alert był wyciszony albo
+    kanał push wyłączony) — liczy się od ostatniego pusha, a bez niego od początku wystąpienia,
+    więc po odwołaniu wyciszenia zaległe przypomnienie idzie przy najbliższym ticku.
+    """
     actions: list[Action] = []
     if not opts.push_enabled:
         return actions
     for rec in list(state.active.values()):
-        if rec.silenced or rec.dismissed or not rec.push_sent or not rec.targets:
+        if rec.dismissed or not rec.targets or state.is_silenced(rec.entity_id):
             continue
         interval = _reminder_interval(rec, opts)
         if interval is None:
@@ -734,7 +740,7 @@ def mute(state: State, entity_id: str) -> list[Action]:
 
 
 def unmute(state: State, entity_id: str) -> list[Action]:
-    """Odwołaj wyciszenie; trwające wystąpienie nadal nic nie wysyła."""
+    """Odwołaj wyciszenie; trwające wystąpienie nie nadrabia powiadomienia, wracają przypomnienia."""
     state.muted.discard(entity_id)
     return []
 
@@ -749,7 +755,8 @@ def disable(state: State, entity_id: str) -> list[Action]:
 
 
 def enable(state: State, entity_id: str) -> list[Action]:
-    """Włącz z powrotem; trwające wystąpienie wraca na listę i do dziennika, ale nic nie wysyła."""
+    """Włącz z powrotem; trwające wystąpienie wraca na listę i do dziennika, bez nadrabiania
+    powiadomienia — wracają tylko przypomnienia."""
     state.disabled.discard(entity_id)
     rec = state.active.get(entity_id)
     if rec is None:

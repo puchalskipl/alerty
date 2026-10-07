@@ -61,6 +61,11 @@
       "journal": { "name": "Alert journal" },
       "snoozed": { "name": "Muted alerts" }
     },
+    "number": {
+      "reminder_error": { "name": "Errors - remind every", "state_attributes": { "push_targets": { "name": "Default push targets" } } },
+      "reminder_warning": { "name": "Warnings - remind every", "state_attributes": { "push_targets": { "name": "Default push targets" } } },
+      "reminder_info": { "name": "Info - remind every", "state_attributes": { "push_targets": { "name": "Default push targets" } } }
+    },
     "switch": {
       "push": { "name": "Push to phone" },
       "persistent": { "name": "Notifications in HA" }
@@ -84,7 +89,7 @@
     },
     "unmute": {
       "name": "Unmute",
-      "description": "Ends muting. An ongoing occurrence still sends nothing; the next one notifies.",
+      "description": "Ends muting. The ongoing occurrence does not catch up the notification, but reminders resume.",
       "fields": { "entity_id": { "name": "Alert", "description": "binary_sensor.alert_* entity." } }
     },
     "disable": {
@@ -94,7 +99,7 @@
     },
     "enable": {
       "name": "Enable",
-      "description": "Re-enables a disabled alert. An ongoing occurrence sends nothing; the next one notifies.",
+      "description": "Enables a disabled alert. The ongoing occurrence returns to the list without catching up the notification; reminders resume.",
       "fields": { "entity_id": { "name": "Alert", "description": "binary_sensor.alert_* entity." } }
     },
     "cleanup": {

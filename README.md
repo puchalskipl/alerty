@@ -55,6 +55,8 @@ Unmute / enable never catch up: an ongoing occurrence stays silent.
 - `sensor.alert_dziennik` — journal (`recent`, `top_30d`)
 - `sensor.alerty_wyciszone` — muted and disabled alerts
 - `switch.alerty_push`, `switch.alerty_powiadomienia_ha` — global push / persistent channels
+- `number.alerty_przypomnienie_{bledy,ostrzezenia,informacje}` — reminder interval per severity in hours
+  (0 = off, same as the option); attribute `push_targets` = default push targets of that severity
 
 Entity names and the UI are translated (Polish and English).
 

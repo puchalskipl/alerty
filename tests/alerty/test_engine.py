@@ -176,7 +176,10 @@ async def test_mute_dismiss_disable_actions():
     await engine.async_user_action("unmute", [EID])
     Clock.advance(hours=30)
     await hass.tick()
-    assert hass.services.calls == []  # trwające wystąpienie dalej ciche
+    # Pierwszy push nie jest nadrabiany, ale zaległe przypomnienie idzie po odwołaniu wyciszenia.
+    assert [(c.domain, c.service) for c in hass.services.calls] == [("notify", "admins")]
+    assert hass.persistent() == {}
+    hass.services.calls.clear()
 
     await engine.async_user_action("dismiss", [EID])
     assert engine.summary()["total"] == 0 and engine.summary()["dismissed"][0]["entity_id"] == EID

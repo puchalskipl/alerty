@@ -437,7 +437,7 @@ def test_row9_no_reminder_when_dismissed_silenced_no_targets_or_warning(now):
     assert logic.tick(state, now + timedelta(days=5), opts()) == []
 
 
-def test_row9_no_reminder_when_push_channel_off_or_push_never_sent(now):
+def test_row9_push_channel_off_then_on_reminds_without_first_push(now):
     state = State()
     _activate(state, now)
     assert logic.tick(state, now + timedelta(hours=30), opts(**{OPT_PUSH_ENABLED: False})) == []
@@ -445,7 +445,42 @@ def test_row9_no_reminder_when_push_channel_off_or_push_never_sent(now):
     state = State()
     _activate(state, now, o=opts(**{OPT_PUSH_ENABLED: False}))  # push nie poszedł
     assert not state.active[EID].push_sent
-    assert logic.tick(state, now + timedelta(hours=30), opts()) == []  # po włączeniu bez nadrabiania
+    # Po włączeniu kanału pierwszy push nie jest nadrabiany, ale przypomnienie idzie
+    # (odstęp liczony od początku wystąpienia).
+    assert logic.tick(state, now + timedelta(hours=23), opts()) == []
+    push = only(logic.tick(state, now + timedelta(hours=30), opts()), SendPush)
+    assert len(push) == 1 and push[0].reminder
+
+
+def test_row9_muted_from_start_reminds_after_unmute(now):
+    state = State()
+    logic.mute(state, EID)
+    actions = logic.handle_state(state, EID, defn(), "on", now, opts())
+    assert only(actions, SendPush) == [] and state.active[EID].silenced
+    assert logic.tick(state, now + timedelta(hours=30), opts()) == []  # wyciszony — nic
+    logic.unmute(state, EID)
+    # Zaległe przypomnienie (minęło 24 h od wystąpienia) idzie przy najbliższym ticku.
+    push = only(logic.tick(state, now + timedelta(hours=30, minutes=1), opts()), SendPush)
+    assert len(push) == 1 and push[0].reminder
+    assert logic.tick(state, now + timedelta(hours=40), opts()) == []
+    assert len(only(logic.tick(state, now + timedelta(hours=54, minutes=1), opts()), SendPush)) == 1
+
+    # Odwołane przed upływem odstępu — przypomnienie dopiero po 24 h od wystąpienia.
+    state = State()
+    logic.mute(state, EID)
+    logic.handle_state(state, EID, defn(), "on", now, opts())
+    logic.unmute(state, EID)
+    assert logic.tick(state, now + timedelta(hours=1), opts()) == []
+    assert len(only(logic.tick(state, now + timedelta(hours=24), opts()), SendPush)) == 1
+
+
+def test_row9_disabled_then_enabled_reminds(now):
+    state = State()
+    logic.disable(state, EID)
+    logic.handle_state(state, EID, defn(), "on", now, opts())
+    assert logic.tick(state, now + timedelta(hours=30), opts()) == []
+    logic.enable(state, EID)
+    assert len(only(logic.tick(state, now + timedelta(hours=30), opts()), SendPush)) == 1
 
 
 def test_row9_reminder_from_alert_attribute(now):
@@ -532,7 +567,7 @@ def test_undismiss_restores_without_sending(now):
     assert logic.undismiss(State(), EID) == [] and logic.dismiss(State(), EID) == []
 
 
-def test_mute_active_then_unmute_sends_only_on_next_occurrence(now):
+def test_mute_active_then_unmute_no_catch_up_but_reminders_resume(now):
     state = State()
     journal_id = _activate(state, now)
     assert journal_id
@@ -540,8 +575,9 @@ def test_mute_active_then_unmute_sends_only_on_next_occurrence(now):
     assert logic.mute(state, EID) == []
     assert state.active[EID].silenced and logic.active_summary(state, now)["total"] == 1
     assert logic.unmute(state, EID) == []
-    assert EID not in state.muted and state.active[EID].silenced  # trwające dalej ciche
-    assert logic.tick(state, now + timedelta(hours=30), opts()) == []
+    assert EID not in state.muted and state.active[EID].silenced  # bez nadrabiania pierwszego
+    # Przypomnienia wracają (push poszedł na początku, 24 h minęło).
+    assert len(only(logic.tick(state, now + timedelta(hours=30), opts()), SendPush)) == 1
     logic.handle_state(state, EID, defn(), "off", now + timedelta(hours=31), opts(), {PID})
     actions = logic.handle_state(state, EID, defn(), "on", now + timedelta(hours=32), opts())
     assert len(only(actions, SendPush)) == 1

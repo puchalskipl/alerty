@@ -43,7 +43,7 @@
           "startup_grace": "Po starcie HA zdarzenia są ignorowane przez ten czas, potem stan jest uzgadniany.",
           "push_targets_error": "Usługi notify (np. admins, mobile). Atrybut notify_targets alertu nadpisuje.",
           "persistent_error": "Atrybut notify_persistent alertu nadpisuje.",
-          "reminder_error": "Zero = bez przypomnień. Przypomnienie idzie tylko po wysłanym pushu, nie dla odrzuconych, wyciszonych i wyłączonych.",
+          "reminder_error": "Zero = bez przypomnień. Przypomnienie dostaje alert z adresatami push — także gdy pierwszy push nie poszedł (był wyciszony, kanał wyłączony). Nie dla odrzuconych ani w czasie wyciszenia lub wyłączenia.",
           "channel_error": "Nazwa kanału powiadomień w aplikacji Companion; dźwięk i priorytet ustawia się na telefonie. Zmiana nazwy tworzy nowy kanał.",
           "on_resolve": "Zaktualizuj: wpis zmienia się na „✅ … ustąpiło, trwało …” z treścią z chwili wystąpienia. Usuń: znika z dzwonka.",
           "cleanup_after_days": "Dotyczy wpisów zaktualizowanych po ustąpieniu.",
@@ -69,6 +69,11 @@
       "journal": { "name": "Dziennik alertów" },
       "snoozed": { "name": "Wyciszone alerty" }
     },
+    "number": {
+      "reminder_error": { "name": "Błędy - przypominaj co", "state_attributes": { "push_targets": { "name": "Domyślni adresaci push" } } },
+      "reminder_warning": { "name": "Ostrzeżenia - przypominaj co", "state_attributes": { "push_targets": { "name": "Domyślni adresaci push" } } },
+      "reminder_info": { "name": "Informacje - przypominaj co", "state_attributes": { "push_targets": { "name": "Domyślni adresaci push" } } }
+    },
     "switch": {
       "push": { "name": "Push na telefon" },
       "persistent": { "name": "Powiadomienia w HA" }
@@ -92,7 +97,7 @@
     },
     "unmute": {
       "name": "Wyłącz wyciszenie",
-      "description": "Kończy wyciszenie. Trwające wystąpienie nadal nic nie wysyła — powiadomi dopiero kolejne.",
+      "description": "Kończy wyciszenie. Trwające wystąpienie nie nadrabia powiadomienia, ale wracają przypomnienia.",
       "fields": { "entity_id": { "name": "Alert", "description": "Encja binary_sensor.alert_*." } }
     },
     "disable": {
@@ -102,7 +107,7 @@
     },
     "enable": {
       "name": "Włącz",
-      "description": "Włącza wyłączony alert. Trwające wystąpienie wraca na listę, ale nic nie wysyła — powiadomi dopiero kolejne.",
+      "description": "Włącza wyłączony alert. Trwające wystąpienie wraca na listę bez nadrabiania powiadomienia, wracają przypomnienia.",
       "fields": { "entity_id": { "name": "Alert", "description": "Encja binary_sensor.alert_*." } }
     },
     "cleanup": {
