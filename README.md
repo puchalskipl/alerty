@@ -32,6 +32,7 @@ template:
           notify_persistent: false                # optional
           notify_click_path: /lovelace/server     # optional, opened from push
           notify_channel: "Alarm"                 # optional Android channel
+          notify_reminder: 24                     # optional, repeat push every N hours; 0 = never
           journal: false                          # optional, skip the journal (status-type alerts)
 ```
 

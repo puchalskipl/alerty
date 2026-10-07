@@ -114,6 +114,26 @@ def test_alert_def_overrides():
     assert defn(notify_channel="  ").channel is None
     assert defn(notify_persistent=True).persistent is True
     assert defn().persistent is None
+    assert defn(notify_reminder=24).reminder_h == 24
+    assert defn().reminder_h is None
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        (None, None),
+        (24, 24.0),
+        ("24", 24.0),
+        ("0,5", 0.5),
+        (0, 0.0),
+        (-1, None),
+        ("abc", None),
+        ("nan", None),
+        (True, None),
+    ],
+)
+def test_parse_hours(value, expected):
+    assert logic.parse_hours(value) == expected
 
 
 # --------------------------------------------------------------------------
@@ -426,6 +446,27 @@ def test_row9_no_reminder_when_push_channel_off_or_push_never_sent(now):
     _activate(state, now, o=opts(**{OPT_PUSH_ENABLED: False}))  # push nie poszedł
     assert not state.active[EID].push_sent
     assert logic.tick(state, now + timedelta(hours=30), opts()) == []  # po włączeniu bez nadrabiania
+
+
+def test_row9_reminder_from_alert_attribute(now):
+    # warning bez przypomnień na poziomie, ale z push i `notify_reminder` — przypomina
+    state = State()
+    _activate(state, now, defn(severity="warning", notify_targets="['admins']", notify_reminder=6))
+    assert logic.tick(state, now + timedelta(hours=5), opts()) == []
+    push = only(logic.tick(state, now + timedelta(hours=6), opts()), SendPush)
+    assert len(push) == 1 and push[0].reminder
+
+    # 0 wyłącza przypomnienia błędu mimo 24 h na poziomie
+    state = State()
+    _activate(state, now, defn(notify_reminder=0))
+    assert logic.tick(state, now + timedelta(days=3), opts()) == []
+
+    # wartość z chwili włączenia przeżywa zapis stanu
+    state = State()
+    _activate(state, now, defn(notify_reminder=2))
+    restored = State.from_dict(state.to_dict())
+    assert restored.active[EID].reminder_h == 2
+    assert len(only(logic.tick(restored, now + timedelta(hours=2), opts()), SendPush)) == 1
 
 
 # --------------------------------------------------------------------------

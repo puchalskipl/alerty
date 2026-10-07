@@ -23,6 +23,7 @@ po włączeniu nic nie jest nadrabiane.
 from __future__ import annotations
 
 import ast
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import AbstractSet, Any, Mapping
@@ -36,6 +37,7 @@ from .const import (
     ATTR_NOTIFY_CHANNEL,
     ATTR_NOTIFY_CLICK_PATH,
     ATTR_NOTIFY_PERSISTENT,
+    ATTR_NOTIFY_REMINDER,
     ATTR_NOTIFY_TARGETS,
     ATTR_SEVERITY,
     ATTR_TITLE,
@@ -109,6 +111,21 @@ def parse_bool(value: Any) -> bool | None:
     return None
 
 
+def parse_hours(value: Any) -> float | None:
+    """Odstęp w godzinach z atrybutu `notify_reminder` (liczba albo tekst, też z przecinkiem).
+
+    None = brak atrybutu albo wartość niepoprawna (ujemna, nie-liczba) — wtedy obowiązuje
+    ustawienie poziomu. 0 = świadomie bez przypomnień.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        hours = float(str(value).strip().replace(",", "."))
+    except ValueError:
+        return None
+    return hours if math.isfinite(hours) and hours >= 0 else None
+
+
 @dataclass(frozen=True)
 class AlertDef:
     """To, co integracja wie o alercie z jego atrybutów."""
@@ -122,6 +139,7 @@ class AlertDef:
     persistent: bool | None = None
     channel: str | None = None
     click_path: str | None = None
+    reminder_h: float | None = None  # `notify_reminder`; None = ustawienie poziomu, 0 = bez
     journal: bool = True  # `journal: false` = tylko widok bieżący, bez wpisu w dzienniku
 
     @classmethod
@@ -152,6 +170,7 @@ class AlertDef:
             persistent=parse_bool(attributes.get(ATTR_NOTIFY_PERSISTENT)),
             channel=channel.strip() if isinstance(channel, str) and channel.strip() else None,
             click_path=click.strip() if isinstance(click, str) and click.strip() else None,
+            reminder_h=parse_hours(attributes.get(ATTR_NOTIFY_REMINDER)),
             journal=True if journal is None else journal,
         )
 
@@ -189,6 +208,7 @@ class ActiveRecord:
     icon: str | None = None
     channel: str | None = None
     click_path: str | None = None
+    reminder_h: float | None = None  # z atrybutu `notify_reminder` w chwili włączenia
     targets: tuple[str, ...] = ()
     want_persistent: bool = False
     persistent_id: str | None = None
@@ -222,6 +242,7 @@ class ActiveRecord:
             "icon": self.icon,
             "channel": self.channel,
             "click_path": self.click_path,
+            "reminder_h": self.reminder_h,
             "targets": list(self.targets),
             "want_persistent": self.want_persistent,
             "persistent_id": self.persistent_id,
@@ -257,6 +278,7 @@ class ActiveRecord:
             icon=data.get("icon") or None,
             channel=data.get("channel") or None,
             click_path=data.get("click_path") or None,
+            reminder_h=parse_hours(data.get("reminder_h")),
             targets=tuple(str(t) for t in (data.get("targets") or [])),
             want_persistent=bool(data.get("want_persistent", False)),
             persistent_id=data.get("persistent_id") or None,
@@ -555,6 +577,7 @@ def handle_state(
             icon=defn.icon,
             channel=defn.channel,
             click_path=defn.click_path,
+            reminder_h=defn.reminder_h,
             targets=_targets_for(defn, opts),
             want_persistent=_wants_persistent(defn, opts),
             silenced=muted or disabled,
@@ -635,6 +658,13 @@ def handle_missing(
     )
 
 
+def _reminder_interval(rec: ActiveRecord, opts: Options) -> timedelta | None:
+    """Odstęp przypomnień: z atrybutu alertu, a bez niego z ustawienia poziomu; None = brak."""
+    if rec.reminder_h is None:
+        return opts.reminder.get(rec.severity)
+    return timedelta(hours=rec.reminder_h) if rec.reminder_h > 0 else None
+
+
 def tick(state: State, now: datetime, opts: Options) -> list[Action]:
     """Przypomnienia (co minutę): trwający, zgłoszony pushem, niewyciszony, nieodrzucony."""
     actions: list[Action] = []
@@ -643,7 +673,7 @@ def tick(state: State, now: datetime, opts: Options) -> list[Action]:
     for rec in list(state.active.values()):
         if rec.silenced or rec.dismissed or not rec.push_sent or not rec.targets:
             continue
-        interval = opts.reminder.get(rec.severity)
+        interval = _reminder_interval(rec, opts)
         if interval is None:
             continue
         last = rec.last_push_ts or rec.on_ts
