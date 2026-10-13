@@ -278,7 +278,7 @@ def test_row3_resolve_updates_persistent_with_on_snapshot(now):
     persistent = only(actions, CreatePersistent)[0]
     assert persistent.notification_id == PID
     assert persistent.title == "✅ Home Assistant - wysokie obciążenie CPU"
-    assert persistent.message == "14% przez 10 min (próg 10%). · ustąpiło 14:15, trwało 2 h 15 min"
+    assert persistent.message == "14% przez 10 min (próg 10%). · ustąpiło 14:15, trwało 2\u00a0godz. 15\u00a0min"
     assert only(actions, SendPush) == []
     assert EID not in state.active
     assert state.resolved_persistents[PID] == off
@@ -784,4 +784,4 @@ def test_resolved_text_uses_local_clock_of_off():
     off = datetime(2026, 10, 5, 14, 32, tzinfo=timezone(timedelta(hours=2)))
     title_fmt, body = logic.resolved_text("Treść.", off, timedelta(minutes=3))
     assert title_fmt.format(title="T") == "✅ T"
-    assert body == "Treść. · ustąpiło 14:32, trwało 3 min"
+    assert body == "Treść. · ustąpiło 14:32, trwało 3\u00a0min"

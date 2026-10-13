@@ -19,25 +19,33 @@ from .const import (
 )
 
 
+NBSP = "\u00a0"
+
+
 def new_id() -> str:
     return uuid4().hex[:12]
 
 
 def format_duration(delta: timedelta | None) -> str:
-    """Czas trwania po polsku, bez spacji przed jednostką: "3 min", "2 h 15 min", "1 d 4 h"."""
+    """Czas trwania po polsku: "3 min", "2 godz. 15 min", "1 dzień 4 godz.", "3 dni".
+
+    Ten sam format co makro czas_trwania w HA (custom_templates/czas.jinja). Między liczbą
+    a jednostką twarda spacja, żeby zawinięty wiersz nie oderwał jednostki od liczby.
+    """
     if delta is None:
         return ""
     total = int(delta.total_seconds())
     if total < 60:
-        return "< 1 min"
+        return f"<{NBSP}1{NBSP}min"
     minutes, _ = divmod(total, 60)
     hours, minutes = divmod(minutes, 60)
     days, hours = divmod(hours, 24)
     if days:
-        return f"{days} d {hours} h" if hours else f"{days} d"
+        day = f"{days}{NBSP}{'dzień' if days == 1 else 'dni'}"
+        return f"{day} {hours}{NBSP}godz." if hours else day
     if hours:
-        return f"{hours} h {minutes} min" if minutes else f"{hours} h"
-    return f"{minutes} min"
+        return f"{hours}{NBSP}godz. {minutes}{NBSP}min" if minutes else f"{hours}{NBSP}godz."
+    return f"{minutes}{NBSP}min"
 
 
 def _iso(value: datetime | None) -> str | None:

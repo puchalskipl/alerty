@@ -96,7 +96,7 @@ async def test_resolve_updates_persistent_with_snapshot():
     assert len(hass.services.calls) == 1  # bez push na OFF
     note = hass.persistent()[pid]
     assert note["title"] == "✅ " + ATTRS["friendly_name"]
-    assert note["message"] == "14% przez 10 min (próg 10%). · ustąpiło 14:15, trwało 2 h 15 min"
+    assert note["message"] == "14% przez 10 min (próg 10%). · ustąpiło 14:15, trwało 2\u00a0godz. 15\u00a0min"
     assert EID not in engine.state.active
     assert engine.journal.entries[0].duration_s == 8100
     assert engine.state.resolved_persistents == {pid: Clock.now}

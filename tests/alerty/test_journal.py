@@ -16,14 +16,16 @@ from custom_components.alerty.journal import Journal, JournalEntry, format_durat
         (0, "< 1 min"),
         (59, "< 1 min"),
         (180, "3 min"),
-        (2 * 3600, "2 h"),
-        (2 * 3600 + 15 * 60, "2 h 15 min"),
-        (28 * 3600, "1 d 4 h"),
-        (3 * 86400, "3 d"),
+        (2 * 3600, "2 godz."),
+        (2 * 3600 + 15 * 60, "2 godz. 15 min"),
+        (24 * 3600, "1 dzień"),
+        (28 * 3600, "1 dzień 4 godz."),
+        (3 * 86400, "3 dni"),
     ],
 )
 def test_format_duration(seconds, expected):
-    assert format_duration(timedelta(seconds=seconds)) == expected
+    # Między liczbą a jednostką twarda spacja, w oczekiwanych tekstach zwykła dla czytelności.
+    assert format_duration(timedelta(seconds=seconds)).replace("\u00a0", " ") == expected
 
 
 def test_format_duration_none():
@@ -102,7 +104,7 @@ def test_recent_newest_first_and_truncated(now):
     recent = journal.recent(count=25, max_body=120)
     assert len(recent) == 25
     assert recent[0]["on"] == (now + timedelta(minutes=29)).isoformat()
-    assert recent[0]["d"] == "1 min" and recent[0]["off"] is not None
+    assert recent[0]["d"] == "1\u00a0min" and recent[0]["off"] is not None
     assert recent[1]["d"] is None and recent[1]["off"] is None
     assert len(recent[0]["b"]) == 120 and recent[0]["b"].endswith("…")
     assert set(recent[0]) == {"e", "t", "s", "b", "on", "off", "d"}
@@ -139,7 +141,7 @@ def test_top_counts_and_totals(now):
         "title": "Tytuł binary_sensor.alert_a",
         "count": 3,
         "total_s": 1800,
-        "total": "30 min",
+        "total": "30\u00a0min",
     }
     assert top[1]["count"] == 1 and top[1]["total_s"] == 1800  # otwarty liczony do „teraz”
     assert b.open
