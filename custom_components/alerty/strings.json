@@ -84,7 +84,7 @@
     },
     "mute": {
       "name": "Mute",
-      "description": "Mutes the alert until unmuted: this and later occurrences send nothing; the alert stays visible.",
+      "description": "Mutes the alert until unmuted: this and later occurrences send nothing; the alert stays visible. Does nothing for a disabled alert.",
       "fields": { "entity_id": { "name": "Alert", "description": "binary_sensor.alert_* entity." } }
     },
     "unmute": {
@@ -94,7 +94,7 @@
     },
     "disable": {
       "name": "Disable",
-      "description": "Disables the alert until enabled: sends nothing and is hidden from the active list.",
+      "description": "Disables the alert until enabled: sends nothing and is hidden from the active list. Clears the mute, so the alert returns unmuted when enabled.",
       "fields": { "entity_id": { "name": "Alert", "description": "binary_sensor.alert_* entity." } }
     },
     "enable": {

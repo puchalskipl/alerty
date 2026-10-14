@@ -41,8 +41,8 @@ template:
 | Service | Effect |
 |---|---|
 | `alerty.dismiss` / `alerty.undismiss` | hide the current occurrence (no reminders); the next occurrence notifies normally |
-| `alerty.mute` / `alerty.unmute` | mute until unmuted: this and later occurrences send nothing, alert stays visible |
-| `alerty.disable` / `alerty.enable` | disable until enabled: sends nothing and is hidden from the active list |
+| `alerty.mute` / `alerty.unmute` | mute until unmuted: this and later occurrences send nothing, alert stays visible (does nothing for a disabled alert) |
+| `alerty.disable` / `alerty.enable` | disable until enabled: sends nothing and is hidden from the active list (clears the mute, so the alert returns unmuted) |
 | `alerty.cleanup` | dismiss old resolved notifications, prune the journal |
 | `alerty.export_journal` | return journal entries (response data) |
 

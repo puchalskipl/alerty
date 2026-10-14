@@ -92,7 +92,7 @@
     },
     "mute": {
       "name": "Wycisz",
-      "description": "Wycisza alert do odwołania: to i kolejne wystąpienia nic nie wysyłają; alert jest dalej widoczny.",
+      "description": "Wycisza alert do odwołania: to i kolejne wystąpienia nic nie wysyłają, alert jest dalej widoczny. Wyłączonego alertu nie wycisza.",
       "fields": { "entity_id": { "name": "Alert", "description": "Encja binary_sensor.alert_*." } }
     },
     "unmute": {
@@ -102,7 +102,7 @@
     },
     "disable": {
       "name": "Wyłącz na stałe",
-      "description": "Wyłącza alert do włączenia: nic nie wysyła i znika z listy aktywnych.",
+      "description": "Wyłącza alert do włączenia: nic nie wysyła i znika z listy aktywnych. Zdejmuje wyciszenie, więc po włączeniu alert wraca jako zwykły.",
       "fields": { "entity_id": { "name": "Alert", "description": "Encja binary_sensor.alert_*." } }
     },
     "enable": {

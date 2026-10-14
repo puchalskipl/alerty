@@ -606,6 +606,29 @@ def test_disable_enable(now):
     assert logic.active_summary(state, now)["total"] == 1
 
 
+def test_disable_clears_mute_and_enable_returns_unmuted(now):
+    state = State()
+    _activate(state, now)
+    logic.mute(state, EID)
+    assert logic.disable(state, EID) == []
+    assert EID not in state.muted and EID in state.disabled
+    summary = logic.active_summary(state, now)
+    assert summary["muted"] == [] and summary["disabled"] == [EID]
+    logic.enable(state, EID)
+    assert EID not in state.muted and EID not in state.disabled
+
+
+def test_mute_disabled_is_noop(now):
+    state = State()
+    logic.disable(state, EID)
+    assert logic.mute(state, EID) == []
+    assert EID not in state.muted and EID in state.disabled
+    # Po włączeniu kolejne wystąpienie powiadamia normalnie.
+    logic.enable(state, EID)
+    actions = logic.handle_state(state, EID, defn(), "on", now, opts())
+    assert len(only(actions, SendPush)) == 1
+
+
 def test_disabled_occurrence_enters_journal_when_enabled(now):
     state = State()
     logic.disable(state, EID)

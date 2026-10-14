@@ -731,7 +731,11 @@ def undismiss(state: State, entity_id: str) -> list[Action]:
 
 
 def mute(state: State, entity_id: str) -> list[Action]:
-    """Wycisz do odwołania: to i kolejne wystąpienia nic nie wysyłają."""
+    """Wycisz do odwołania: to i kolejne wystąpienia nic nie wysyłają.
+
+    Wyłączonego alertu nie wycisza — wyłączenie już obejmuje wyciszenie."""
+    if entity_id in state.disabled:
+        return []
     state.muted.add(entity_id)
     rec = state.active.get(entity_id)
     if rec is not None:
@@ -746,7 +750,10 @@ def unmute(state: State, entity_id: str) -> list[Action]:
 
 
 def disable(state: State, entity_id: str) -> list[Action]:
-    """Wyłącz na stałe: nic nie wysyła i znika z listy aktywnych (wpis w dzienniku zostaje)."""
+    """Wyłącz na stałe: nic nie wysyła i znika z listy aktywnych (wpis w dzienniku zostaje).
+
+    Zdejmuje wyciszenie, więc po włączeniu alert wraca jako zwykły, nie wyciszony."""
+    state.muted.discard(entity_id)
     state.disabled.add(entity_id)
     rec = state.active.get(entity_id)
     if rec is not None:
